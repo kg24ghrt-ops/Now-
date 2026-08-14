@@ -17,6 +17,10 @@
     ".rs": {
       "enabled": false,
       "run": "rust-analyzer"
+    },
+    ".yml": {
+      "enabled": true,
+      "run": "yaml-language-server --stdio"
     }
   }
 }

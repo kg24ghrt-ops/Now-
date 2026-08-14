@@ -1,0 +1,13 @@
+[package]
+name = "hw-script-myanmar"
+version = "0.1.0"
+edition = "2021"
+description = "Myanmar (Burmese) script pack for the handwriting engine."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+hw-core = { workspace = true }
+hw-segment = { workspace = true }
+hw-shape = { workspace = true }
+unicode-segmentation = { workspace = true }
+kurbo = { workspace = true }

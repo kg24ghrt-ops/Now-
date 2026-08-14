@@ -1,4 +1,5 @@
 [workspace]
+resolver = "2"
 members = [
     "crates/hw-core",
     "crates/hw-segment",
@@ -10,6 +11,48 @@ members = [
     "crates/hw-ffi",
     "crates/script-packs/hw-script-myanmar",
     "crates/script-packs/hw-script-latin",
-    
     "xtask",
 ]
+
+[workspace.dependencies]
+# Core dependencies
+unicode-segmentation = "1.12"
+unicode-script = "0.5"
+harfrust = "0.5"
+read-fonts = "0.26"
+kurbo = "0.11"
+lyon = "1.0"
+noise = "0.9"
+rand = "0.8"
+rand_pcg = "0.3"
+palette = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3"
+thiserror = "1.0"
+bytemuck = { version = "1.19", features = ["derive"] }
+wgpu = { version = "24.0", features = ["spirv", "glsl"] }
+pollster = "0.3"
+
+# FFI / build tools
+cbindgen = "0.28"
+cargo-ndk = "3.5"
+
+# Test / benchmark
+criterion = "0.5"
+proptest = "1.4"
+
+# Internal workspace crates
+hw-core = { path = "crates/hw-core" }
+hw-segment = { path = "crates/hw-segment" }
+hw-shape = { path = "crates/hw-shape" }
+hw-physics = { path = "crates/hw-physics" }
+hw-ink = { path = "crates/hw-ink" }
+hw-paper = { path = "crates/hw-paper" }
+hw-render-wgpu = { path = "crates/hw-render-wgpu" }
+hw-ffi = { path = "crates/hw-ffi" }
+hw-script-myanmar = { path = "crates/script-packs/hw-script-myanmar" }
+hw-script-latin = { path = "crates/script-packs/hw-script-latin" }
+
+[profile.release]
+lto = true
+opt-level = 3
