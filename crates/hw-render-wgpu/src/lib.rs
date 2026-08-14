@@ -1,68 +1,61 @@
 //! GPU rendering via wgpu.
-//! Provides a renderer that can take an `InkMesh` and render it with a triple‑pass
-//! pipeline: base ink, diffusion (compute), and sheen.
+//! Two passes: base ink (render) + diffusion (compute).
+//! The final image is stored in `diffused_texture`.
 
 use bytemuck::{Pod, Zeroable};
 use hw_ink::{InkMesh, InkVertex};
 use hw_paper::{PaperParams, PaperTexture};
-use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
-/// Errors that can occur during GPU rendering.
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {
-    #[error("WGPU initialization failed: {0}")]
+    #[error("WGPU init failed: {0}")]
     InitFailed(String),
-    #[error("Shader compilation failed: {0}")]
+    #[error("Shader error: {0}")]
     ShaderError(String),
-    #[error("Failed to create texture: {0}")]
+    #[error("Texture error: {0}")]
     TextureError(String),
-    #[error("Invalid input mesh")]
+    #[error("Invalid mesh")]
     InvalidMesh,
 }
 
-/// A wgpu‑based renderer.
 pub struct Renderer {
-    instance: wgpu::Instance,
-    adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
-
-    // Pipelines.
     render_pipeline: wgpu::RenderPipeline,
     compute_pipeline: wgpu::ComputePipeline,
+    uniform_bgl: wgpu::BindGroupLayout,
+    combined_bgl: wgpu::BindGroupLayout,
 
-    // Bind group layouts (for sharing).
-    uniform_bind_group_layout: wgpu::BindGroupLayout,
-    paper_bind_group_layout: wgpu::BindGroupLayout,
+    paper_texture: wgpu::Texture,
+    paper_view: wgpu::TextureView,
+    normal_texture: wgpu::Texture,
+    normal_view: wgpu::TextureView,
+    sampler: wgpu::Sampler,
 
-    // Cached resources.
-    paper_texture: Option<wgpu::Texture>,
-    paper_view: Option<wgpu::TextureView>,
-    paper_sampler: wgpu::Sampler,
+    color_texture: wgpu::Texture,
+    color_view: wgpu::TextureView,
+    depth_texture: wgpu::Texture,
+    depth_view: wgpu::TextureView,
+    diffused_texture: wgpu::Texture,
+    diffused_view: wgpu::TextureView,
 
-    // Current target size.
     target_width: u32,
     target_height: u32,
-
-    // Offscreen render texture and its view.
-    offscreen_texture: Option<wgpu::Texture>,
-    offscreen_view: Option<wgpu::TextureView>,
-    offscreen_depth_texture: Option<wgpu::Texture>,
-    offscreen_depth_view: Option<wgpu::TextureView>,
 }
 
-/// Uniforms passed to the shader.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct Uniforms {
-    view_proj: [[f32; 4]; 4], // 4x4 matrix
-    ink_color: [f32; 4],      // RGBA
+    view_proj: [[f32; 4]; 4],
+    ink_color: [f32; 4],
     wetness: f32,
-    _padding: [f32; 3],
+    _pad1: [f32; 3],
+    texture_width: u32,
+    texture_height: u32,
+    _pad2: [u32; 2],
 }
 
-/// Vertex buffer layout (matches `InkVertex`).
 const VERTEX_ATTRIBUTES: &[wgpu::VertexAttribute] = &[
     wgpu::VertexAttribute {
         format: wgpu::VertexFormat::Float32x3,
@@ -98,28 +91,26 @@ const VERTEX_BUFFER_LAYOUT: wgpu::VertexBufferLayout = wgpu::VertexBufferLayout 
 };
 
 impl Renderer {
-    /// Create a new renderer. Initializes wgpu with a surface (if `surface` is provided)
-    /// or headless for offscreen rendering.
-    pub async fn new(surface: Option<wgpu::Surface<'static>>, target_width: u32, target_height: u32) -> Result<Self, RenderError> {
+    pub async fn new(width: u32, height: u32) -> Result<Self, RenderError> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN, // Android uses Vulkan; fallback to GLES if needed.
+            backends: wgpu::Backends::VULKAN,
             ..Default::default()
         });
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: surface.as_ref(),
+                compatible_surface: None,
                 ..Default::default()
             })
             .await
-            .ok_or_else(|| RenderError::InitFailed("No suitable adapter found".into()))?;
+            .ok_or_else(|| RenderError::InitFailed("No adapter".into()))?;
 
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    label: Some("Handwriting Engine GPU"),
-                    required_features: wgpu::Features::empty(),
+                    label: Some("Handwriting Engine"),
+                    required_features: wgpu::Features::STORAGE_TEXTURE_FORMAT_RGBA8_UNORM,
                     required_limits: wgpu::Limits::default(),
                 },
                 None,
@@ -127,32 +118,30 @@ impl Renderer {
             .await
             .map_err(|e| RenderError::InitFailed(e.to_string()))?;
 
-        // Compile shaders.
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Ink Shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders.wgsl").into()),
         });
 
-        // Uniform bind group layout.
-        let uniform_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        // ---- Bind group layouts ----
+        let uniform_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Uniform BGL"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX
+                    | wgpu::ShaderStages::FRAGMENT
+                    | wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
                 },
-            ],
+                count: None,
+            }],
         });
 
-        // Paper texture bind group layout.
-        let paper_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Paper BGL"),
+        let combined_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Combined BGL"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -170,7 +159,6 @@ impl Renderer {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
-                // Normal map texture (optional)
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::COMPUTE,
@@ -181,19 +169,38 @@ impl Renderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::ReadWrite,
+                        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
             ],
         });
 
-        // Pipeline layout.
+        // ---- Pipelines ----
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[&uniform_bind_group_layout, &paper_bind_group_layout],
+            label: Some("Pipeline Layout"),
+            bind_group_layouts: &[&uniform_bgl, &combined_bgl],
             push_constant_ranges: &[],
         });
 
-        // Render pipeline.
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Ink Render Pipeline"),
+            label: Some("Base Ink"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
@@ -224,12 +231,9 @@ impl Renderer {
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
+                ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth32Float,
@@ -238,33 +242,22 @@ impl Renderer {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
-            multisample: wgpu::MultisampleState {
-                count: 1,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
+            multisample: wgpu::MultisampleState::default(),
             multiview: None,
             cache: None,
         });
 
-        // Compute pipeline for ink diffusion.
-        let compute_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Compute Pipeline Layout"),
-            bind_group_layouts: &[&uniform_bind_group_layout, &paper_bind_group_layout],
-            push_constant_ranges: &[],
-        });
-
         let compute_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Ink Diffusion Compute"),
-            layout: Some(&compute_pipeline_layout),
+            label: Some("Diffusion"),
+            layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: "cs_diffuse",
             compilation_options: Default::default(),
             cache: None,
         });
 
-        // Paper sampler.
-        let paper_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        // ---- Resources ----
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Paper Sampler"),
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
@@ -275,56 +268,29 @@ impl Renderer {
             ..Default::default()
         });
 
-        let mut renderer = Self {
-            instance,
-            adapter,
-            device,
-            queue,
-            render_pipeline,
-            compute_pipeline,
-            uniform_bind_group_layout,
-            paper_bind_group_layout,
-            paper_texture: None,
-            paper_view: None,
-            paper_sampler,
-            target_width,
-            target_height,
-            offscreen_texture: None,
-            offscreen_view: None,
-            offscreen_depth_texture: None,
-            offscreen_depth_view: None,
-        };
+        // Generate default paper (will be replaced later if needed)
+        let default_paper = PaperTexture::generate(&PaperParams::default());
+        let (paper_tex, paper_view, normal_tex, normal_view) =
+            Self::upload_paper(&device, &queue, &default_paper);
 
-        renderer.create_offscreen_targets(target_width, target_height)?;
-        Ok(renderer)
-    }
-
-    fn create_offscreen_targets(&mut self, width: u32, height: u32) -> Result<(), RenderError> {
-        // Color texture.
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Offscreen Color"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
+        // Offscreen textures
+        let color_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Color Tex"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Depth texture.
-        let depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Offscreen Depth"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Depth Tex"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -334,23 +300,52 @@ impl Renderer {
         });
         let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        self.offscreen_texture = Some(texture);
-        self.offscreen_view = Some(view);
-        self.offscreen_depth_texture = Some(depth_texture);
-        self.offscreen_depth_view = Some(depth_view);
-        Ok(())
+        let diffused_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Diffused Tex"),
+            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::STORAGE_BINDING
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let diffused_view = diffused_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        Ok(Renderer {
+            device,
+            queue,
+            render_pipeline,
+            compute_pipeline,
+            uniform_bgl,
+            combined_bgl,
+            paper_texture: paper_tex,
+            paper_view,
+            normal_texture: normal_tex,
+            normal_view,
+            sampler,
+            color_texture,
+            color_view,
+            depth_texture,
+            depth_view,
+            diffused_texture,
+            diffused_view,
+            target_width: width,
+            target_height: height,
+        })
     }
 
-    /// Load a paper texture from a `PaperTexture` struct.
-    pub fn load_paper_texture(&mut self, paper: &PaperTexture) -> Result<(), RenderError> {
+    fn upload_paper(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        paper: &PaperTexture,
+    ) -> (wgpu::Texture, wgpu::TextureView, wgpu::Texture, wgpu::TextureView) {
         let rgba = paper.as_rgba();
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Paper Texture"),
-            size: wgpu::Extent3d {
-                width: paper.width,
-                height: paper.height,
-                depth_or_array_layers: 1,
-            },
+        let paper_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Paper Tex"),
+            size: wgpu::Extent3d { width: paper.width, height: paper.height, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -358,37 +353,18 @@ impl Renderer {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        self.queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
+        queue.write_texture(
+            wgpu::ImageCopyTexture { texture: &paper_tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
             &rgba,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(paper.width * 4),
-                rows_per_image: Some(paper.height),
-            },
-            wgpu::Extent3d {
-                width: paper.width,
-                height: paper.height,
-                depth_or_array_layers: 1,
-            },
+            wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(paper.width * 4), rows_per_image: Some(paper.height) },
+            wgpu::Extent3d { width: paper.width, height: paper.height, depth_or_array_layers: 1 },
         );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let paper_view = paper_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Also upload normal map as a separate texture (but we'll store it as a float texture).
-        // For simplicity, we'll encode the normal map into a RGBA texture.
         let normal_data: Vec<u8> = paper.normal_map.iter().map(|v| ((v + 1.0) * 127.5) as u8).collect();
-        let normal_texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Normal Map"),
-            size: wgpu::Extent3d {
-                width: paper.width,
-                height: paper.height,
-                depth_or_array_layers: 1,
-            },
+        let normal_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Normal Tex"),
+            size: wgpu::Extent3d { width: paper.width, height: paper.height, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -396,111 +372,203 @@ impl Renderer {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        self.queue.write_texture(
-            wgpu::ImageCopyTexture {
-                texture: &normal_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
+        queue.write_texture(
+            wgpu::ImageCopyTexture { texture: &normal_tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
             &normal_data,
-            wgpu::ImageDataLayout {
-                offset: 0,
-                bytes_per_row: Some(paper.width * 4),
-                rows_per_image: Some(paper.height),
-            },
-            wgpu::Extent3d {
-                width: paper.width,
-                height: paper.height,
-                depth_or_array_layers: 1,
-            },
+            wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(paper.width * 4), rows_per_image: Some(paper.height) },
+            wgpu::Extent3d { width: paper.width, height: paper.height, depth_or_array_layers: 1 },
         );
-        let normal_view = normal_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let normal_view = normal_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Note: We'll keep both textures, but the shader expects a single bind group with both.
-        // We'll store them separately and create a bind group on demand.
-        self.paper_texture = Some(texture);
-        self.paper_view = Some(view);
-        // We'll ignore the normal map for now, or we can combine them.
-        // For simplicity, we'll only use the base paper texture.
+        (paper_tex, paper_view, normal_tex, normal_view)
+    }
+
+    pub fn load_paper_texture(&mut self, paper: &PaperTexture) -> Result<(), RenderError> {
+        let (pt, pv, nt, nv) = Self::upload_paper(&self.device, &self.queue, paper);
+        self.paper_texture = pt;
+        self.paper_view = pv;
+        self.normal_texture = nt;
+        self.normal_view = nv;
         Ok(())
     }
 
-    /// Render an ink mesh to the offscreen texture.
     pub fn render_mesh(&mut self, mesh: &InkMesh, ink_color: [f32; 4], wetness: f32) -> Result<(), RenderError> {
         if mesh.vertices.is_empty() || mesh.indices.is_empty() {
             return Err(RenderError::InvalidMesh);
         }
 
-        let width = self.target_width;
-        let height = self.target_height;
+        let w = self.target_width;
+        let h = self.target_height;
 
-        // Ensure offscreen targets exist.
-        if self.offscreen_texture.is_none() {
-            self.create_offscreen_targets(width, height)?;
-        }
-
-        // Build uniform buffer.
+        // ---- Uniforms ----
+        let view_proj = [
+            [2.0 / w as f32, 0.0, 0.0, 0.0],
+            [0.0, -2.0 / h as f32, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [-1.0, 1.0, 0.0, 1.0],
+        ];
         let uniforms = Uniforms {
-            view_proj: [
-                [2.0 / width as f32, 0.0, 0.0, 0.0],
-                [0.0, -2.0 / height as f32, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [-1.0, 1.0, 0.0, 1.0],
-            ],
+            view_proj,
             ink_color,
             wetness,
-            _padding: [0.0, 0.0, 0.0],
+            _pad1: [0.0; 3],
+            texture_width: w,
+            texture_height: h,
+            _pad2: [0, 0],
         };
-        let uniform_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Uniform Buffer"),
+        let uniform_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Uniforms"),
             contents: bytemuck::bytes_of(&uniforms),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        // Vertex and index buffers.
-        let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertex Buffer"),
+        // ---- Vertex / index buffers ----
+        let vertex_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Vertices"),
             contents: bytemuck::cast_slice(&mesh.vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
-        let index_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Index Buffer"),
+        let index_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Indices"),
             contents: bytemuck::cast_slice(&mesh.indices),
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        // Create bind groups.
-        let uniform_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        // ---- Bind groups ----
+        let uniform_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Uniform BG"),
-            layout: &self.uniform_bind_group_layout,
+            layout: &self.uniform_bgl,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &uniform_buffer,
+                    buffer: &uniform_buf,
                     offset: 0,
                     size: None,
                 }),
             }],
         });
 
-        // Paper bind group.
-        let paper_bind_group = if let (Some(view), Some(sampler)) = (&self.paper_view, &self.paper_sampler) {
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Paper BG"),
-                layout: &self.paper_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(view),
+        let combined_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Combined BG"),
+            layout: &self.combined_bgl,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&self.paper_view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&self.normal_view) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&self.color_view) },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&self.diffused_view) },
+            ],
+        });
+
+        // ---- Encode ----
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Encoder"),
+        });
+
+        // 1. Base ink pass
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Base Ink"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &self.color_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }),
+                        store: wgpu::StoreOp::Store,
                     },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                    // Binding 2 is normal map; we'll just bind the same texture for now.
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(view),
-                    },
-  
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            rpass.set_pipeline(&self.render_pipeline);
+            rpass.set_bind_group(0, &uniform_bg, &[]);
+            rpass.set_bind_group(1, &combined_bg, &[]);
+            rpass.set_vertex_buffer(0, vertex_buf.slice(..));
+            rpass.set_index_buffer(index_buf.slice(..), wgpu::IndexFormat::Uint32);
+            rpass.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
+        }
+
+        // 2. Diffusion compute pass
+        if wetness > 0.01 {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Diffusion"),
+                timestamp_writes: None,
+            });
+            cpass.set_pipeline(&self.compute_pipeline);
+            cpass.set_bind_group(0, &uniform_bg, &[]);
+            cpass.set_bind_group(1, &combined_bg, &[]);
+            let wg_x = (w + 7) / 8;
+            let wg_y = (h + 7) / 8;
+            cpass.dispatch_workgroups(wg_x, wg_y, 1);
+        } else {
+            // No diffusion – just copy base to diffused texture.
+            encoder.copy_texture_to_texture(
+                wgpu::ImageCopyTexture { texture: &self.color_texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                wgpu::ImageCopyTexture { texture: &self.diffused_texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+                wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            );
+        }
+
+        self.queue.submit(Some(encoder.finish()));
+        Ok(())
+    }
+
+    /// Read the final image (after diffusion) as RGBA bytes.
+    pub fn read_pixels(&self) -> Result<Vec<u8>, RenderError> {
+        let w = self.target_width;
+        let h = self.target_height;
+        let buf_size = (w * h * 4) as u64;
+        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Readback"),
+            size: buf_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Readback Encoder"),
+        });
+
+        encoder.copy_texture_to_buffer(
+            wgpu::ImageCopyTexture {
+                texture: &self.diffused_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyBuffer {
+                buffer: &readback,
+                layout: wgpu::ImageDataLayout {
+                    offset: 0,
+                    bytes_per_row: Some(w * 4),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
+
+        self.queue.submit(Some(encoder.finish()));
+
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |res| {
+            let _ = tx.send(res);
+        });
+        self.device.poll(wgpu::Maintain::Wait);
+        rx.recv().unwrap().map_err(|e| RenderError::TextureError(e.to_string()))?;
+
+        let data = slice.get_mapped_range();
+        let pixels = data.to_vec();
+        drop(data);
+        readback.unmap();
+        Ok(pixels)
+    }
+}
