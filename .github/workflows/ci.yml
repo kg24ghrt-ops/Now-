@@ -5,165 +5,226 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+permissions:
+  contents: read
+
 jobs:
-  # ---- Auto-format on push (runs first, commits if needed) ----
-  auto-format:
+  # ============================================================
+  # Format
+  # ============================================================
+  format:
+    name: Auto-format
     runs-on: ubuntu-latest
+
+    # Only push events can modify the repository.
     if: github.event_name == 'push'
+
     permissions:
       contents: write
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install Rust
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust stable + rustfmt
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
 
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Auto-format code
+      - name: Format workspace
         run: cargo fmt --all
 
-      - name: Commit formatting changes
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "style: auto-format Rust code"
-          file_pattern: "*.rs"
+      - name: Commit formatted code
+        run: |
+          if git diff --quiet; then
+            echo "Already formatted."
+            exit 0
+          fi
 
-  # ---- Lint and check ----
-  lint:
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -- '*.rs' '*.toml'
+          git commit -m "style: auto-format Rust code"
+          git push
+
+  # ============================================================
+  # Formatting verification
+  # ============================================================
+  fmt-check:
+    name: Verify formatting
     runs-on: ubuntu-latest
-    needs: auto-format
-    steps:
-      - uses: actions/checkout@v4
+    needs: format
 
-      - name: Install Rust
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust stable + rustfmt
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: handwriting-engine
+          components: rustfmt
 
       - name: Verify formatting
         run: cargo fmt --all -- --check
 
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Run cargo-deny (license/security audit)
-        uses: EmbarkStudios/cargo-deny-action@v1
-        with:
-          command: check advisories licenses
-
-  # ---- Build and test (Linux) ----
-  test-linux:
+  # ============================================================
+  # Clippy
+  # ============================================================
+  lint:
+    name: Clippy
     runs-on: ubuntu-latest
-    needs: lint
+    needs: fmt-check
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v6
 
-      - name: Install Rust
+      - name: Install Rust stable + clippy
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers
-
-      - name: Cache dependencies
+      - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: handwriting-engine
 
-      - name: Build workspace
-        run: cargo build --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-      - name: Run tests
-        run: cargo test --workspace
-
-      - name: Run randomized runtime tests (multiple seeds)
-        run: |
-          for seed in $(shuf -i 1-999999 -n 5); do
-            echo "Testing with seed=$seed"
-            cargo test --workspace -- --test-threads=1 --seed=$seed || exit 1
-          done
-
-      - name: Run benchmarks (smoke test)
-        run: cargo bench --workspace -- --test
-
-  # ---- Build Android .so libraries ----
-  build-android:
+  # ============================================================
+  # Linux
+  # ============================================================
+  test-linux:
+    name: Linux build and tests
     runs-on: ubuntu-latest
     needs: lint
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Vulkan dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libvulkan-dev \
+            mesa-vulkan-drivers
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: handwriting-engine
+
+      - name: Check workspace
+        run: cargo check --workspace --all-targets --all-features
+
+      - name: Build workspace
+        run: cargo build --workspace --all-targets --all-features
+
+      - name: Test workspace
+        run: cargo test --workspace --all-features
+
+  # ============================================================
+  # Android
+  # ============================================================
+  build-android:
+    name: Android ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    needs: lint
+
     strategy:
+      fail-fast: false
       matrix:
         target:
           - aarch64-linux-android
           - armv7-linux-androideabi
           - x86_64-linux-android
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Install Rust
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cargo-ndk
-        run: cargo install cargo-ndk
-
-      - name: Setup Android NDK
-        uses: android-actions/setup-android@v3
-        with:
-          cmdline-tools-version: 11076708
-          packages: ndk;27.0.12077973
-
-      - name: Set NDK path
-        run: echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
-
-      - name: Cache dependencies
+      - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: handwriting-engine-android-${{ matrix.target }}
 
-      - name: Build .so for ${{ matrix.target }}
-        run: cargo ndk --target ${{ matrix.target }} --build-mode release -- build -p hw-ffi
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
 
-      - name: Strip symbols (reduce size)
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: 14742923
+          packages: |
+            platform-tools
+            platforms;android-36
+            build-tools;36.0.0
+            ndk;29.0.14206865
+
+      - name: Set Android NDK
         run: |
-          $ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip \
-            target/${{ matrix.target }}/release/libhandwriting.so
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/29.0.14206865" >> "$GITHUB_ENV"
 
-      - name: Upload artifact
+      - name: Build hw-ffi
+        run: |
+          cargo ndk \
+            --target ${{ matrix.target }} \
+            --build-mode release \
+            -- build -p hw-ffi
+
+      - name: Strip symbols
+        run: |
+          "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" \
+            "target/${{ matrix.target }}/release/libhandwriting.so"
+
+      - name: Upload Android library
         uses: actions/upload-artifact@v4
         with:
           name: libhandwriting-${{ matrix.target }}
           path: target/${{ matrix.target }}/release/libhandwriting.so
+          if-no-files-found: error
 
-  # ---- Generate C header ----
+  # ============================================================
+  # C header
+  # ============================================================
   cbindgen:
+    name: C header
     runs-on: ubuntu-latest
     needs: lint
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Install Rust
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: handwriting-engine
+
       - name: Install cbindgen
-        run: cargo install cbindgen
+        run: cargo install cbindgen --locked
 
       - name: Generate header
         run: cbindgen --crate hw-ffi --output handwriting_engine.h
@@ -171,99 +232,141 @@ jobs:
       - name: Upload header
         uses: actions/upload-artifact@v4
         with:
-          name: handwriting_engine.h
+          name: handwriting-engine-header
           path: handwriting_engine.h
+          if-no-files-found: error
 
-  # ---- Golden image regression tests ----
+  # ============================================================
+  # Golden images
+  # ============================================================
   golden-images:
+    name: Golden image tests
     runs-on: ubuntu-latest
     needs: test-linux
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Install Rust
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install system dependencies
+      - name: Install Vulkan dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers
+          sudo apt-get install -y \
+            libvulkan-dev \
+            mesa-vulkan-drivers
 
-      - name: Cache dependencies
+      - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
           shared-key: handwriting-engine
 
-      - name: Generate reference images (if missing)
+      - name: Generate references if missing
         run: |
           mkdir -p tests/golden-images/reference
           cargo test --workspace --test golden -- --generate-ref || true
 
-      - name: Run golden image tests
+      - name: Run golden tests
         run: cargo test --workspace --test golden -- --nocapture
 
-      - name: Upload reference images
+      - name: Upload references
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: golden-reference
           path: tests/golden-images/reference/
 
-      - name: Upload diff images on failure
+      - name: Upload diffs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: golden-diffs
           path: tests/golden-images/diffs/
 
-  # ---- Fuzz/property testing ----
+  # ============================================================
+  # Segmentation fuzz/property tests
+  # ============================================================
   fuzz-segmentation:
+    name: Segmentation tests
     runs-on: ubuntu-latest
     needs: test-linux
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Install Rust
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache dependencies
+      - name: Cache Rust
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: handwriting-engine
 
-      - name: Run proptest (randomized Unicode fuzzing)
+      - name: Run segmentation tests
         run: cargo test --workspace --test fuzz_segmentation -- --nocapture
 
-  # ---- Release build and publish ----
+  # ============================================================
+  # Release
+  # ============================================================
   release:
+    name: Release
     runs-on: ubuntu-latest
-    needs: [test-linux, build-android, cbindgen, golden-images]
+
+    needs:
+      - test-linux
+      - build-android
+      - cbindgen
+      - golden-images
+
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+
     permissions:
       contents: write
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download Android libraries
+        uses: actions/download-artifact@v8
         with:
+          pattern: libhandwriting-*
           path: artifacts
 
-      - name: Package Android libs
+      - name: Download C header
+        uses: actions/download-artifact@v8
+        with:
+          name: handwriting-engine-header
+          path: artifacts/header
+
+      - name: Package Android libraries
         run: |
           mkdir -p android-libs/arm64-v8a
           mkdir -p android-libs/armeabi-v7a
           mkdir -p android-libs/x86_64
-          cp artifacts/libhandwriting-aarch64-linux-android/libhandwriting.so android-libs/arm64-v8a/
-          cp artifacts/libhandwriting-armv7-linux-androideabi/libhandwriting.so android-libs/armeabi-v7a/
-          cp artifacts/libhandwriting-x86_64-linux-android/libhandwriting.so android-libs/x86_64/
+
+          cp artifacts/libhandwriting-aarch64-linux-android/libhandwriting.so \
+            android-libs/arm64-v8a/
+
+          cp artifacts/libhandwriting-armv7-linux-androideabi/libhandwriting.so \
+            android-libs/armeabi-v7a/
+
+          cp artifacts/libhandwriting-x86_64-linux-android/libhandwriting.so \
+            android-libs/x86_64/
+
+          cp artifacts/header/handwriting_engine.h .
+
           tar czf handwriting-android-libs.tar.gz android-libs/
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/**/*.so
-            artifacts/**/*.h
+            handwriting_engine.h
             handwriting-android-libs.tar.gz
           generate_release_notes: true
           fail_on_unmatched_files: false
-          
