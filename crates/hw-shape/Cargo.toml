@@ -1,0 +1,10 @@
+[package]
+name = "hw-shape"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+harfrust = { workspace = true }
+read-fonts = { workspace = true }
+kurbo = { workspace = true }
+thiserror = { workspace = true }

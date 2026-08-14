@@ -1,0 +1,22 @@
+{
+  "plugin": "org.smartide.plugin.python",
+  "run": "python main.py",
+  "intelligence": {
+    ".json": {
+      "enabled": true,
+      "run": "vscode-json-language-server --stdio"
+    },
+    ".py": {
+      "enabled": false,
+      "run": "pylsp"
+    },
+    ".toml": {
+      "enabled": false,
+      "run": "taplo lsp stdio"
+    },
+    ".rs": {
+      "enabled": false,
+      "run": "rust-analyzer"
+    }
+  }
+}

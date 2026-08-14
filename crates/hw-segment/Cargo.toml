@@ -1,0 +1,8 @@
+[package]
+name = "hw-segment"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+unicode-segmentation = { workspace = true }
+unicode-script = { workspace = true }

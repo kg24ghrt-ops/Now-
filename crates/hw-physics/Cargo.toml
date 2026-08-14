@@ -1,0 +1,11 @@
+[package]
+name = "hw-physics"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+kurbo = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+rand = { workspace = true }
+rand_pcg = { workspace = true }
+thiserror = { workspace = true }

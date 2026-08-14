@@ -1,0 +1,12 @@
+[package]
+name = "hw-render-wgpu"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wgpu = { workspace = true, features = ["spirv", "glsl"] }
+bytemuck = { workspace = true, features = ["derive"] }
+pollster = { version = "0.3" }  # for blocking async
+thiserror = { workspace = true }
+hw-ink = { path = "../hw-ink" }
+hw-paper = { path = "../hw-paper" }

@@ -1,0 +1,10 @@
+[package]
+name = "hw-ink"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+kurbo = { workspace = true }
+lyon = { workspace = true }
+bytemuck = { workspace = true, features = ["derive"] }
+hw-physics = { path = "../hw-physics" }
