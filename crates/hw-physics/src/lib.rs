@@ -20,25 +20,25 @@ pub struct PointSample {
 /// Defines how fatigue decays over time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FatigueCurve {
-    pub initial: f32,          // 0..1, starting fatigue
-    pub decay_rate: f32,       // per second
-    pub max_fatigue: f32,      // 0..1
+    pub initial: f32,     // 0..1, starting fatigue
+    pub decay_rate: f32,  // per second
+    pub max_fatigue: f32, // 0..1
 }
 
 /// Tremor parameters – sinusoidal jitter.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TremorParams {
-    pub frequency: f32,        // Hz
-    pub amplitude: f32,        // in pixels
-    pub noise_scale: f32,      // additional random jitter
+    pub frequency: f32,   // Hz
+    pub amplitude: f32,   // in pixels
+    pub noise_scale: f32, // additional random jitter
 }
 
 /// Pressure decay as the writer tires.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PressureDecay {
-    pub start_pressure: f32,   // 0..1
-    pub min_pressure: f32,     // 0..1
-    pub decay_rate: f32,       // per second of writing
+    pub start_pressure: f32, // 0..1
+    pub min_pressure: f32,   // 0..1
+    pub decay_rate: f32,     // per second of writing
 }
 
 /// Slant drift: slant angle changes over the course of a stroke/line.
@@ -52,8 +52,8 @@ pub struct SlantDrift {
 /// Spacing bias: horizontal drift per character (e.g., cursive ligatures).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpacingBias {
-    pub bias_per_char: f32,    // pixels per character
-    pub jitter_scale: f32,     // randomness in spacing
+    pub bias_per_char: f32, // pixels per character
+    pub jitter_scale: f32,  // randomness in spacing
 }
 
 /// A complete handwriting profile that determines the 'personality' of the pen.
@@ -65,7 +65,7 @@ pub struct HandProfile {
     pub slant_drift: SlantDrift,
     pub spacing_bias: SpacingBias,
     pub base_stroke_width: f32, // in pixels
-    pub speed: f64,            // pixels per second (nominal drawing speed)
+    pub speed: f64,             // pixels per second (nominal drawing speed)
 }
 
 impl Default for HandProfile {
@@ -153,11 +153,10 @@ impl PenSimulator {
         // If this is a new stroke, update slant drift and reset pressure a bit.
         if is_new_stroke {
             let drift = self.rng.gen_range(-1.0..1.0) * self.profile.slant_drift.drift_per_stroke;
-            self.current_slant = (self.current_slant + drift)
-                .clamp(
-                    self.profile.slant_drift.base_slant - self.profile.slant_drift.drift_range,
-                    self.profile.slant_drift.base_slant + self.profile.slant_drift.drift_range,
-                );
+            self.current_slant = (self.current_slant + drift).clamp(
+                self.profile.slant_drift.base_slant - self.profile.slant_drift.drift_range,
+                self.profile.slant_drift.base_slant + self.profile.slant_drift.drift_range,
+            );
             // Slight pressure recovery at start of stroke.
             self.pressure = self.profile.pressure_decay.start_pressure;
         }
@@ -176,7 +175,11 @@ impl PenSimulator {
         for w in path.windows(2) {
             total_len += w[0].distance(w[1]);
         }
-        let duration = if total_len > 0.0 { total_len / speed } else { 0.1 };
+        let duration = if total_len > 0.0 {
+            total_len / speed
+        } else {
+            0.1
+        };
 
         // If we have no length, just emit the first point.
         if total_len < 0.001 {
@@ -322,6 +325,13 @@ mod tests {
         assert!(samples.len() > 10);
         assert!(samples[0].pressure > 0.0);
         // Last point should be near the end.
-        assert!(samples.last().unwrap().position.distance(Point::new(100.0, 0.0)) < 3.0);
+        assert!(
+            samples
+                .last()
+                .unwrap()
+                .position
+                .distance(Point::new(100.0, 0.0))
+                < 3.0
+        );
     }
 }

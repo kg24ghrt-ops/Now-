@@ -4,8 +4,8 @@
 use hw_core::ScriptPolicy;
 use hw_segment::{Cluster, Script};
 use hw_shape::{GlyphProbe, ShapedRun};
-use unicode_segmentation::UnicodeSegmentation;
 use kurbo::BezPath;
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Myanmar script policy.
 pub struct MyanmarPolicy;
@@ -37,7 +37,8 @@ impl MyanmarPolicy {
 
     /// Check if a character is a medial (consonant modifier).
     fn is_medial(ch: char) -> bool {
-        matches!(ch,
+        matches!(
+            ch,
             '\u{103C}' // ြ (ya-pin)
             | '\u{103D}' // ွ (wa-pin)
             | '\u{103E}' // ှ (ha-pin)
@@ -46,8 +47,10 @@ impl MyanmarPolicy {
 
     /// Check if a character is a consonant (including stacked).
     fn is_consonant(ch: char) -> bool {
-        matches!(ch,
-            '\u{1000}'..='\u{102A}' // consonants and some vowels
+        matches!(
+            ch,
+            '\u{1000}'
+                ..='\u{102A}' // consonants and some vowels
             | '\u{103B}' // ရ (ra)
         )
     }

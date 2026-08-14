@@ -1,16 +1,16 @@
 //! Core orchestration for the handwriting engine.
 //! Manages sessions, text processing, physics, and rendering.
 
+use hw_core::ScriptPolicy;
 use hw_ink::{build_ink_mesh, InkMesh};
 use hw_paper::{PaperParams, PaperTexture};
 use hw_physics::{HandProfile, PenSimulator, PointSample};
 use hw_segment::{detect_script_run, segment_text, Cluster, Script};
 use hw_shape::{GlyphSource, HarfBuzzGlyphSource, ShapedGlyph};
-use hw_core::ScriptPolicy;
 // Import the script packs.
-use hw_script_myanmar::MyanmarPolicy;
-use hw_script_latin::LatinPolicy;
 use hw_script_arabic::ArabicPolicy;
+use hw_script_latin::LatinPolicy;
+use hw_script_myanmar::MyanmarPolicy;
 use kurbo::Point;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -161,12 +161,7 @@ impl Session {
         let samples = self.pen.trace_path(&all_points, true);
 
         // Build the ink mesh from the samples.
-        let mesh = build_ink_mesh(
-            &samples,
-            self.base_width,
-            self.wetness,
-            self.paper_scale,
-        );
+        let mesh = build_ink_mesh(&samples, self.base_width, self.wetness, self.paper_scale);
 
         self.mesh = Some(mesh);
         Ok(())

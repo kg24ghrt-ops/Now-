@@ -1,9 +1,9 @@
 //! Glyph shaping abstraction using HarfBuzz and read-fonts.
 //! Provides vector outlines for glyphs with fallback to bitmaps.
 
-use harfrust::{Face, Font, Features, Buffer, ShapeResult, GlyphInfo};
-use read_fonts::TableProvider;
+use harfrust::{Buffer, Face, Features, Font, GlyphInfo, ShapeResult};
 use kurbo::{BezPath, PathEl, Point, Vec2};
+use read_fonts::TableProvider;
 use std::sync::Arc;
 
 pub use harfrust::*;
@@ -39,8 +39,7 @@ pub struct HarfBuzzGlyphSource {
 impl HarfBuzzGlyphSource {
     /// Load a font from raw font data (TTF/OTF).
     pub fn from_bytes(data: &[u8]) -> Result<Self, ShapeError> {
-        let face = Face::from_bytes(data, 0)
-            .map_err(|e| ShapeError::FontLoad(e.to_string()))?;
+        let face = Face::from_bytes(data, 0).map_err(|e| ShapeError::FontLoad(e.to_string()))?;
         let font = Font::new(face.clone(), Default::default());
         Ok(Self { font, face })
     }
@@ -52,7 +51,8 @@ impl HarfBuzzGlyphSource {
         buffer.set_direction(harfrust::Direction::LeftToRight);
         // You might want to set script/language from the segmenter.
 
-        self.font.shape(&mut buffer, &Features::empty())
+        self.font
+            .shape(&mut buffer, &Features::empty())
             .map_err(|_| ShapeError::ShapingFailed)?;
 
         let infos = buffer.glyph_infos();
@@ -111,8 +111,8 @@ pub struct ShapedGlyph {
 /// Supports both TrueType (glyf) and CFF outlines.
 fn outline_to_path(face: &read_fonts::Face, glyph_id: u32) -> Option<BezPath> {
     use read_fonts::glyph::OutlinePen;
-    use read_fonts::tables::glyf::Glyf;
     use read_fonts::tables::cff::Cff;
+    use read_fonts::tables::glyf::Glyf;
     use read_fonts::types::Point;
 
     // First attempt: TrueType glyf table.

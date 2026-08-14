@@ -3,12 +3,10 @@
 use bytemuck::{Pod, Zeroable};
 use hw_physics::PointSample;
 use kurbo::{BezPath, PathEl, Point, Vec2};
-use lyon::tessellation::{
-    FillTessellator, StrokeOptions, StrokeTessellator, VertexBuffers,
-};
 use lyon::math::Point as LyonPoint;
-use lyon::path::Path as LyonPath;
 use lyon::path::builder::*;
+use lyon::path::Path as LyonPath;
+use lyon::tessellation::{FillTessellator, StrokeOptions, StrokeTessellator, VertexBuffers};
 use std::f32::consts::PI;
 
 /// A single vertex for the ink mesh.
