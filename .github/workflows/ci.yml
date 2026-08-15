@@ -35,7 +35,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      # ---------- Android NDK (with local caching) ----------
+      # ---------- Android NDK (cached) ----------
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         with:
@@ -56,11 +56,20 @@ jobs:
             ${{ runner.os }}-cargo-${{ matrix.target }}-
             ${{ runner.os }}-cargo-
 
-      # ---------- Install cargo-ndk (pre-built binary) ----------
-      - name: Install cargo-ndk
+      # ---------- Install cargo-binstall (pre-built binary) ----------
+      - name: Install cargo-binstall
         run: |
-          cargo install cargo-binstall --no-confirm
-          cargo binstall cargo-ndk --no-confirm
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+          # or manually download:
+          # curl -L -o ~/.cargo/bin/cargo-binstall https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-x86_64-unknown-linux-musl.tgz
+          # tar -xzf - -C ~/.cargo/bin
+      # Ensure it's executable
+      - name: Make cargo-binstall executable
+        run: chmod +x ~/.cargo/bin/cargo-binstall
+
+      # ---------- Install cargo-ndk (pre-built) ----------
+      - name: Install cargo-ndk
+        run: cargo binstall cargo-ndk --no-confirm
 
       # ---------- Build .so ----------
       - name: Build Android library
