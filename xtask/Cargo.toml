@@ -1,9 +1,0 @@
-[package]
-name = "xtask"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-cbindgen = { workspace = true }
-cargo-ndk = { workspace = true }
-anyhow = "1.0"
