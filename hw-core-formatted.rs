@@ -1,3 +1,5 @@
+/data/data/org.smartide.code/files/home/projects/fc/crates/hw-core/src/lib.rs:
+
 //! Core orchestration for the handwriting engine.
 //! Manages sessions, text processing, physics, and rendering.
 

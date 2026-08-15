@@ -74,10 +74,7 @@ pub unsafe extern "C" fn hw_session_destroy(session: HwSessionHandle) {
 /// Feed text into the session.
 /// This replaces any previous text.
 #[no_mangle]
-pub extern "C" fn hw_session_feed_text(
-    session: HwSessionHandle,
-    text: *const c_char,
-) -> HwError {
+pub extern "C" fn hw_session_feed_text(session: HwSessionHandle, text: *const c_char) -> HwError {
     if session.is_null() || text.is_null() {
         return HwError::HwErrorInvalidArgument;
     }
@@ -121,10 +118,7 @@ pub extern "C" fn hw_session_set_ink_color(
 
 /// Set the wetness (0..1).
 #[no_mangle]
-pub extern "C" fn hw_session_set_wetness(
-    session: HwSessionHandle,
-    wetness: f32,
-) -> HwError {
+pub extern "C" fn hw_session_set_wetness(session: HwSessionHandle, wetness: f32) -> HwError {
     if session.is_null() {
         return HwError::HwErrorInvalidArgument;
     }
@@ -136,10 +130,7 @@ pub extern "C" fn hw_session_set_wetness(
 
 /// Set the base stroke width in pixels.
 #[no_mangle]
-pub extern "C" fn hw_session_set_base_width(
-    session: HwSessionHandle,
-    width: f32,
-) -> HwError {
+pub extern "C" fn hw_session_set_base_width(session: HwSessionHandle, width: f32) -> HwError {
     if session.is_null() {
         return HwError::HwErrorInvalidArgument;
     }

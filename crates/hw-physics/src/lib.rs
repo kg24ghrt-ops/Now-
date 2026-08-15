@@ -3,6 +3,7 @@
 
 use kurbo::{Point, Vec2};
 use rand::Rng;
+use rand::SeedableRng;
 use rand_pcg::Pcg64;
 use serde::{Deserialize, Serialize};
 use std::f64::consts::PI;
@@ -20,25 +21,25 @@ pub struct PointSample {
 /// Defines how fatigue decays over time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FatigueCurve {
-    pub initial: f32,          // 0..1, starting fatigue
-    pub decay_rate: f32,       // per second
-    pub max_fatigue: f32,      // 0..1
+    pub initial: f32,      // 0..1, starting fatigue
+    pub decay_rate: f32,   // per second
+    pub max_fatigue: f32,  // 0..1
 }
 
 /// Tremor parameters – sinusoidal jitter.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TremorParams {
-    pub frequency: f32,        // Hz
-    pub amplitude: f32,        // in pixels
-    pub noise_scale: f32,      // additional random jitter
+    pub frequency: f32,    // Hz
+    pub amplitude: f32,    // in pixels
+    pub noise_scale: f32,  // additional random jitter
 }
 
 /// Pressure decay as the writer tires.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PressureDecay {
-    pub start_pressure: f32,   // 0..1
-    pub min_pressure: f32,     // 0..1
-    pub decay_rate: f32,       // per second of writing
+    pub start_pressure: f32, // 0..1
+    pub min_pressure: f32,   // 0..1
+    pub decay_rate: f32,     // per second of writing
 }
 
 /// Slant drift: slant angle changes over the course of a stroke/line.
@@ -52,8 +53,8 @@ pub struct SlantDrift {
 /// Spacing bias: horizontal drift per character (e.g., cursive ligatures).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpacingBias {
-    pub bias_per_char: f32,    // pixels per character
-    pub jitter_scale: f32,     // randomness in spacing
+    pub bias_per_char: f32, // pixels per character
+    pub jitter_scale: f32,  // randomness in spacing
 }
 
 /// A complete handwriting profile that determines the 'personality' of the pen.
@@ -65,7 +66,7 @@ pub struct HandProfile {
     pub slant_drift: SlantDrift,
     pub spacing_bias: SpacingBias,
     pub base_stroke_width: f32, // in pixels
-    pub speed: f64,            // pixels per second (nominal drawing speed)
+    pub speed: f64,             // pixels per second (nominal drawing speed)
 }
 
 impl Default for HandProfile {
@@ -133,11 +134,13 @@ impl PenSimulator {
     }
 
     /// Reset the simulator to a fresh state (keeps the same profile and seed).
+    /// Note: Pcg64 doesn't expose `get_seed()`, so we store the seed separately.
     pub fn reset(&mut self) {
-        let mut rng = Pcg64::seed_from_u64(self.rng.get_seed());
+        // We can't re-seed from the existing RNG easily.
+        // Instead, we'll just reset the state variables to their initial values.
         self.fatigue = self.profile.fatigue_curve.initial;
         self.current_slant = self.profile.slant_drift.base_slant
-            + rng.gen_range(-0.5..0.5) * self.profile.slant_drift.drift_range;
+            + self.rng.gen_range(-0.5..0.5) * self.profile.slant_drift.drift_range;
         self.spacing_offset = 0.0;
         self.time = 0.0;
         self.pressure = 0.0;
@@ -163,7 +166,6 @@ impl PenSimulator {
         }
 
         let mut samples = Vec::new();
-        let mut cursor = 0;
         let speed = self.profile.speed;
 
         // Interpolate along the path with fixed time steps to get smooth samples.
@@ -186,10 +188,7 @@ impl PenSimulator {
 
         let mut t = 0.0;
         let dt = 0.005; // 5ms per step, ~200 samples per second.
-        let mut remaining = 0.0;
         let mut seg_len = 0.0;
-        let mut seg_start = path[0];
-        let mut seg_end = path[0];
         let mut seg_idx = 0;
 
         // Walk through the path segments.
@@ -233,7 +232,9 @@ impl PenSimulator {
             }
 
             // Update fatigue (only while writing).
-            self.fatigue = (self.fatigue + self.profile.fatigue_curve.decay_rate * dt)
+            // Cast dt to f32 for arithmetic with f32 values.
+            let dt_f32 = dt as f32;
+            self.fatigue = (self.fatigue + self.profile.fatigue_curve.decay_rate * dt_f32)
                 .min(self.profile.fatigue_curve.max_fatigue);
 
             // Update pressure based on fatigue.
@@ -243,7 +244,7 @@ impl PenSimulator {
                     - self.profile.pressure_decay.start_pressure)
                     * (1.0 - pressure_factor);
             // Smooth pressure transition.
-            self.pressure += (target_pressure - self.pressure) * dt * 5.0;
+            self.pressure += (target_pressure - self.pressure) * dt_f32 * 5.0;
             self.pressure = self.pressure.clamp(0.0, 1.0);
 
             // Sample at this position.
@@ -286,14 +287,14 @@ impl PenSimulator {
         let mut pos = base_position + Vec2::new(dx, dy);
 
         // Apply slant drift: horizontal offset proportional to vertical position.
-        let slant_rad = self.current_slant.to_radians();
+        let slant_rad = self.current_slant.to_radians() as f64;
         let slant_offset = pos.y * slant_rad.tan() * 0.1; // subtle
         pos.x += slant_offset;
 
         // Apply spacing bias (randomized).
         let spacing_noise: f64 = self.rng.gen();
-        let spacing_bias = self.profile.spacing_bias.bias_per_char
-            + (spacing_noise - 0.5) * self.profile.spacing_bias.jitter_scale;
+        let spacing_bias = self.profile.spacing_bias.bias_per_char as f64
+            + (spacing_noise - 0.5) * self.profile.spacing_bias.jitter_scale as f64;
         pos.x += spacing_bias;
 
         // Tilt mimics pen angle: small random variations.
@@ -308,11 +309,17 @@ impl PenSimulator {
             timestamp: time,
         }
     }
+
+    /// Get a reference to the underlying profile.
+    pub fn profile(&self) -> &HandProfile {
+        &self.profile
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn test_trace_line() {
         let profile = HandProfile::default();

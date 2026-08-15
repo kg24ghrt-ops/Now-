@@ -27,7 +27,11 @@ fn gen_header() -> Result<()> {
 
 fn build_android() -> Result<()> {
     // Use cargo-ndk to build for armeabi-v7a, arm64-v8a, x86_64.
-    let targets = vec!["armv7-linux-androideabi", "aarch64-linux-android", "x86_64-linux-android"];
+    let targets = vec![
+        "armv7-linux-androideabi",
+        "aarch64-linux-android",
+        "x86_64-linux-android",
+    ];
     for target in targets {
         let status = Command::new("cargo")
             .args(&["ndk", "-t", target, "build", "-p", "hw-ffi", "--release"])

@@ -10,10 +10,10 @@ pub struct PaperParams {
     pub width: u32,
     pub height: u32,
     pub seed: u32,
-    pub fiber_scale: f64,      // frequency of fiber noise
-    pub grain_scale: f64,      // fine grain frequency
-    pub fiber_strength: f64,   // 0..1
-    pub grain_strength: f64,   // 0..1
+    pub fiber_scale: f64,    // frequency of fiber noise
+    pub grain_scale: f64,    // fine grain frequency
+    pub fiber_strength: f64, // 0..1
+    pub grain_strength: f64, // 0..1
 }
 
 impl Default for PaperParams {
@@ -34,7 +34,7 @@ impl Default for PaperParams {
 pub struct PaperTexture {
     pub width: u32,
     pub height: u32,
-    pub data: Vec<u8>, // grayscale, row‑major
+    pub data: Vec<u8>,        // grayscale, row‑major
     pub normal_map: Vec<f32>, // (nx, ny, nz) as f32, row‑major
 }
 
@@ -57,11 +57,13 @@ impl PaperTexture {
                 let py = y as f64 / height as f64;
 
                 // Fiber noise: anisotropic, elongated in one direction.
-                let fiber = fiber_noise.get([px * params.fiber_scale, py * params.fiber_scale, 0.0]);
+                let fiber =
+                    fiber_noise.get([px * params.fiber_scale, py * params.fiber_scale, 0.0]);
                 let fiber_val = (fiber * 0.5 + 0.5) * params.fiber_strength;
 
                 // Grain noise: isotropic high‑frequency.
-                let grain = grain_noise.get([px * params.grain_scale, py * params.grain_scale, 0.0]);
+                let grain =
+                    grain_noise.get([px * params.grain_scale, py * params.grain_scale, 0.0]);
                 let grain_val = (grain * 0.5 + 0.5) * params.grain_strength;
 
                 // Combine.
@@ -73,15 +75,29 @@ impl PaperTexture {
 
                 // Normal map: compute gradient of the noise.
                 let eps = 1.0 / width as f64;
-                let dx = normal_noise.get([(px + eps) * params.fiber_scale, py * params.fiber_scale, 0.0])
-                    - normal_noise.get([(px - eps) * params.fiber_scale, py * params.fiber_scale, 0.0]);
-                let dy = normal_noise.get([px * params.fiber_scale, (py + eps) * params.fiber_scale, 0.0])
-                    - normal_noise.get([px * params.fiber_scale, (py - eps) * params.fiber_scale, 0.0]);
+                let dx = normal_noise.get([
+                    (px + eps) * params.fiber_scale,
+                    py * params.fiber_scale,
+                    0.0,
+                ]) - normal_noise.get([
+                    (px - eps) * params.fiber_scale,
+                    py * params.fiber_scale,
+                    0.0,
+                ]);
+                let dy = normal_noise.get([
+                    px * params.fiber_scale,
+                    (py + eps) * params.fiber_scale,
+                    0.0,
+                ]) - normal_noise.get([
+                    px * params.fiber_scale,
+                    (py - eps) * params.fiber_scale,
+                    0.0,
+                ]);
 
                 let nx = -(dx * 0.2) as f32;
                 let ny = -(dy * 0.2) as f32;
                 let nz = 1.0;
-                let len = (nx*nx + ny*ny + nz*nz).sqrt();
+                let len = (nx * nx + ny * ny + nz * nz).sqrt();
                 let idx = (y * width + x) as usize * 3;
                 normal_map[idx] = nx / len;
                 normal_map[idx + 1] = ny / len;
@@ -89,7 +105,12 @@ impl PaperTexture {
             }
         }
 
-        Self { width, height, data, normal_map }
+        Self {
+            width,
+            height,
+            data,
+            normal_map,
+        }
     }
 
     /// Create an RGBA version (for GPU upload).

@@ -1,5 +1,5 @@
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_script::{Script, UnicodeScript};
+use unicode_segmentation::UnicodeSegmentation;
 
 /// A cluster is a sequence of codepoints that form a single grapheme cluster,
 /// plus its script property (derived from the first codepoint, or "Unknown" if empty).

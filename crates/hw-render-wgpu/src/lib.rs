@@ -276,7 +276,11 @@ impl Renderer {
         // Offscreen textures
         let color_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Color Tex"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -290,7 +294,11 @@ impl Renderer {
 
         let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Depth Tex"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -302,7 +310,11 @@ impl Renderer {
 
         let diffused_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Diffused Tex"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -341,11 +353,20 @@ impl Renderer {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         paper: &PaperTexture,
-    ) -> (wgpu::Texture, wgpu::TextureView, wgpu::Texture, wgpu::TextureView) {
+    ) -> (
+        wgpu::Texture,
+        wgpu::TextureView,
+        wgpu::Texture,
+        wgpu::TextureView,
+    ) {
         let rgba = paper.as_rgba();
         let paper_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Paper Tex"),
-            size: wgpu::Extent3d { width: paper.width, height: paper.height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: paper.width,
+                height: paper.height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -354,17 +375,38 @@ impl Renderer {
             view_formats: &[],
         });
         queue.write_texture(
-            wgpu::ImageCopyTexture { texture: &paper_tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            wgpu::ImageCopyTexture {
+                texture: &paper_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
             &rgba,
-            wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(paper.width * 4), rows_per_image: Some(paper.height) },
-            wgpu::Extent3d { width: paper.width, height: paper.height, depth_or_array_layers: 1 },
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(paper.width * 4),
+                rows_per_image: Some(paper.height),
+            },
+            wgpu::Extent3d {
+                width: paper.width,
+                height: paper.height,
+                depth_or_array_layers: 1,
+            },
         );
         let paper_view = paper_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let normal_data: Vec<u8> = paper.normal_map.iter().map(|v| ((v + 1.0) * 127.5) as u8).collect();
+        let normal_data: Vec<u8> = paper
+            .normal_map
+            .iter()
+            .map(|v| ((v + 1.0) * 127.5) as u8)
+            .collect();
         let normal_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Normal Tex"),
-            size: wgpu::Extent3d { width: paper.width, height: paper.height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: paper.width,
+                height: paper.height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -373,10 +415,23 @@ impl Renderer {
             view_formats: &[],
         });
         queue.write_texture(
-            wgpu::ImageCopyTexture { texture: &normal_tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            wgpu::ImageCopyTexture {
+                texture: &normal_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
             &normal_data,
-            wgpu::ImageDataLayout { offset: 0, bytes_per_row: Some(paper.width * 4), rows_per_image: Some(paper.height) },
-            wgpu::Extent3d { width: paper.width, height: paper.height, depth_or_array_layers: 1 },
+            wgpu::ImageDataLayout {
+                offset: 0,
+                bytes_per_row: Some(paper.width * 4),
+                rows_per_image: Some(paper.height),
+            },
+            wgpu::Extent3d {
+                width: paper.width,
+                height: paper.height,
+                depth_or_array_layers: 1,
+            },
         );
         let normal_view = normal_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -392,7 +447,12 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn render_mesh(&mut self, mesh: &InkMesh, ink_color: [f32; 4], wetness: f32) -> Result<(), RenderError> {
+    pub fn render_mesh(
+        &mut self,
+        mesh: &InkMesh,
+        ink_color: [f32; 4],
+        wetness: f32,
+    ) -> Result<(), RenderError> {
         if mesh.vertices.is_empty() || mesh.indices.is_empty() {
             return Err(RenderError::InvalidMesh);
         }
@@ -416,23 +476,29 @@ impl Renderer {
             texture_height: h,
             _pad2: [0, 0],
         };
-        let uniform_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Uniforms"),
-            contents: bytemuck::bytes_of(&uniforms),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let uniform_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Uniforms"),
+                contents: bytemuck::bytes_of(&uniforms),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
 
         // ---- Vertex / index buffers ----
-        let vertex_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Vertices"),
-            contents: bytemuck::cast_slice(&mesh.vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buf = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Indices"),
-            contents: bytemuck::cast_slice(&mesh.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        });
+        let vertex_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Vertices"),
+                contents: bytemuck::cast_slice(&mesh.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let index_buf = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Indices"),
+                contents: bytemuck::cast_slice(&mesh.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
 
         // ---- Bind groups ----
         let uniform_bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -452,18 +518,35 @@ impl Renderer {
             label: Some("Combined BG"),
             layout: &self.combined_bgl,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&self.paper_view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&self.normal_view) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&self.color_view) },
-                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&self.diffused_view) },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&self.paper_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&self.normal_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&self.color_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&self.diffused_view),
+                },
             ],
         });
 
         // ---- Encode ----
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
 
         // 1. Base ink pass
         {
@@ -473,7 +556,12 @@ impl Renderer {
                     view: &self.color_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }),
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 1.0,
+                            g: 1.0,
+                            b: 1.0,
+                            a: 1.0,
+                        }),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -511,9 +599,23 @@ impl Renderer {
         } else {
             // No diffusion – just copy base to diffused texture.
             encoder.copy_texture_to_texture(
-                wgpu::ImageCopyTexture { texture: &self.color_texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-                wgpu::ImageCopyTexture { texture: &self.diffused_texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
-                wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                wgpu::ImageCopyTexture {
+                    texture: &self.color_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::ImageCopyTexture {
+                    texture: &self.diffused_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
             );
         }
 
@@ -533,9 +635,11 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Readback Encoder"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Readback Encoder"),
+            });
 
         encoder.copy_texture_to_buffer(
             wgpu::ImageCopyTexture {
@@ -552,7 +656,11 @@ impl Renderer {
                     rows_per_image: Some(h),
                 },
             },
-            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
         );
 
         self.queue.submit(Some(encoder.finish()));
@@ -563,7 +671,9 @@ impl Renderer {
             let _ = tx.send(res);
         });
         self.device.poll(wgpu::Maintain::Wait);
-        rx.recv().unwrap().map_err(|e| RenderError::TextureError(e.to_string()))?;
+        rx.recv()
+            .unwrap()
+            .map_err(|e| RenderError::TextureError(e.to_string()))?;
 
         let data = slice.get_mapped_range();
         let pixels = data.to_vec();
