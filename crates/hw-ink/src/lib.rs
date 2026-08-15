@@ -6,8 +6,9 @@ use kurbo::{BezPath, PathEl, Point, Vec2};
 use lyon::math::Point as LyonPoint;
 use lyon::path::builder::*;
 use lyon::path::Path as LyonPath;
-use lyon::tessellation::{FillTessellator, StrokeOptions, StrokeTessellator, VertexBuffers};
-use std::f32::consts::PI;
+// FIX: removed unused `FillTessellator` from import
+use lyon::tessellation::{StrokeOptions, StrokeTessellator, VertexBuffers};
+// FIX: removed unused `use std::f32::consts::PI;`
 
 /// A single vertex for the ink mesh.
 /// This layout matches the WGSL shader expected by `hw-render-wgpu`.
@@ -15,10 +16,10 @@ use std::f32::consts::PI;
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct InkVertex {
     pub position: [f32; 3], // x, y, z (z is layer depth, unused for now)
-    pub uv: [f32; 2],       // paper texture coordinates (will be set later)
-    pub pressure: f32,      // 0..1
-    pub wetness: f32,       // 0..1, controls ink diffusion
-    pub normal: [f32; 2],   // for lighting effects
+    pub uv: [f32; 2], // paper texture coordinates (will be set later)
+    pub pressure: f32, // 0..1
+    pub wetness: f32, // 0..1, controls ink diffusion
+    pub normal: [f32; 2], // for lighting effects
 }
 
 /// A complete ink mesh ready for GPU upload.
@@ -52,7 +53,6 @@ pub fn build_ink_mesh(
 
     // Convert samples to a kurbo path (interpolated with bezier curves).
     let path = build_kurbo_path(samples);
-
     // Convert kurbo path to lyon path.
     let lyon_path = convert_kurbo_to_lyon(&path);
 
@@ -138,8 +138,9 @@ pub fn build_ink_mesh(
         let n1 = normals[i + 1];
 
         // Width at each point (pressure‑modulated).
-        let w0 = half_width * (0.5 + p0.pressure * 0.5);
-        let w1 = half_width * (0.5 + p1.pressure * 0.5);
+        // FIX: cast to f64 to match Vec2<f64> multiplication
+        let w0 = (half_width * (0.5 + p0.pressure * 0.5)) as f64;
+        let w1 = (half_width * (0.5 + p1.pressure * 0.5)) as f64;
 
         // Compute four vertices: left0, left1, right0, right1.
         let l0 = p0.position + n0 * w0;
