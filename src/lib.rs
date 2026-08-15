@@ -4,7 +4,7 @@ use wgpu::{
     Backends, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, ComputePassDescriptor,
     ComputePipelineDescriptor, DeviceDescriptor, Extent3d, Features, Instance, InstanceDescriptor,
     Limits, PowerPreference, Queue, RequestAdapterOptions, ShaderModuleDescriptor, ShaderSource,
-    StorageTextureAccess, Surface, SurfaceConfiguration, SurfaceError, TextureDescriptor,
+    StorageTextureAccess, Surface, SurfaceConfiguration, TextureDescriptor,
     TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
 };
 use raw_window_handle::{AndroidNdkWindowHandle, RawWindowHandle};
@@ -92,6 +92,7 @@ impl PaperEngine {
             power_preference: PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         }).await.expect("No GPU adapter found");
 
         let (device, queue) = adapter.request_device(
@@ -103,7 +104,6 @@ impl PaperEngine {
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
             },
-            None,
         ).await.expect("Failed to create device");
 
         let caps = surface.get_capabilities(&adapter);
@@ -289,8 +289,7 @@ impl PaperEngine {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("paper-pipeline-layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout)],
         });
 
         let make_pipeline = |shader: &wgpu::ShaderModule, entry: &str| -> wgpu::ComputePipeline {
@@ -435,17 +434,17 @@ impl PaperEngine {
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
-        self.device.poll(wgpu::Maintain::Wait);
+        self.device.poll(wgpu::Poll::Wait);
 
         info!("Paper generation complete");
     }
 
     // ── Render to surface ─────────────────────────────────────────
 
-    pub fn render(&mut self) -> Result<(), SurfaceError> {
+    pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         let output = match self.surface.as_ref().unwrap().get_current_texture() {
             Ok(t) => t,
-            Err(SurfaceError::Lost) => {
+            Err(wgpu::SurfaceError::Lost) => {
                 self.surface.as_ref().unwrap().configure(&self.device, &self.config);
                 return self.render();
             }
@@ -459,17 +458,21 @@ impl PaperEngine {
         });
 
         encoder.copy_texture_to_texture(
-            wgpu::ImageCopyTexture {
+            wgpu::ImageCopyTextureTagged {
                 texture: &self.output_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
+                color_space: wgpu::PredefinedColorSpace::Srgb,
+                premultiplied_alpha: false,
             },
-            wgpu::ImageCopyTexture {
+            wgpu::ImageCopyTextureTagged {
                 texture: &output.texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
+                color_space: wgpu::PredefinedColorSpace::Srgb,
+                premultiplied_alpha: false,
             },
             wgpu::Extent3d {
                 width: self.config.width,
