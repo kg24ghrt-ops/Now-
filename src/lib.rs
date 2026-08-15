@@ -96,9 +96,10 @@ impl PaperEngine {
 
         let (device, queue) = adapter.request_device(
             &DeviceDescriptor {
+                label: Some("paper-device"),
                 required_features: Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
                 required_limits: Limits::default(),
-                label: Some("paper-device"),
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
             },
@@ -120,6 +121,7 @@ impl PaperEngine {
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
+            color_space: wgpu::SurfaceColorSpace::Auto,
         };
         surface.configure(&device, &config);
 

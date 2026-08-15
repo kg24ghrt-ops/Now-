@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-wgpu = "23.0"
+wgpu = "30.0"
 pollster = "0.3"
 bytemuck = { version = "1.14", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
