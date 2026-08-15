@@ -4,11 +4,26 @@ use wgpu::{
     Backends, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, ComputePassDescriptor,
     ComputePipelineDescriptor, DeviceDescriptor, Extent3d, Features, Instance, InstanceDescriptor,
     Limits, PowerPreference, Queue, RequestAdapterOptions, ShaderModuleDescriptor, ShaderSource,
-    StorageTextureAccess, Surface, SurfaceConfiguration, SurfaceError, TextureDescriptor,
+    StorageTextureAccess, Surface, SurfaceConfiguration, TextureDescriptor,
     TextureDimension, TextureFormat, TextureUsages, TextureViewDescriptor,
 };
 use raw_window_handle::{AndroidNdkWindowHandle, RawWindowHandle};
 use bytemuck::{Pod, Zeroable};
+
+// ── Manual Error Handling for Surface ────────────────────────────────
+
+#[derive(Debug)]
+pub enum RenderError {
+    Surface(String),
+}
+
+impl std::fmt::Display for RenderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::error::Error for RenderError {}
 
 // ── Logging ──────────────────────────────────────────────────────────
 
@@ -71,10 +86,10 @@ impl PaperEngine {
         init_logging();
         info!("PaperEngine::new() — width={}, height={}", width, height);
 
-        let instance = Instance::new(InstanceDescriptor {
-            backends: Backends::VULKAN,
-            ..Default::default()
-        });
+        // Removed Default trait usage for InstanceDescriptor, initialized properly via new_without_display_handle()
+        let mut instance_desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        instance_desc.backends = Backends::VULKAN;
+        let instance = Instance::new(instance_desc);
 
         let surface = unsafe {
             let handle = AndroidNdkWindowHandle::new(
@@ -92,9 +107,11 @@ impl PaperEngine {
             power_preference: PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            apply_limit_buckets: false, // Added required field for wgpu v30+
         }).await.expect("No GPU adapter found");
 
         let (device, queue) = adapter.request_device(
+            // Removed extra `None` argument (trace path) as it's now part of DeviceDescriptor
             &DeviceDescriptor {
                 label: Some("paper-device"),
                 required_features: Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
@@ -103,7 +120,6 @@ impl PaperEngine {
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
             },
-            None,
         ).await.expect("Failed to create device");
 
         let caps = surface.get_capabilities(&adapter);
@@ -173,74 +189,32 @@ impl PaperEngine {
             label: Some("paper-bind-layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
+                    binding: 0, visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
+                    binding: 1, visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: StorageTextureAccess::WriteOnly,
-                        format: TextureFormat::Rgba16Float,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                    },
-                    count: None,
+                    binding: 2, visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture { access: StorageTextureAccess::WriteOnly, format: TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D2 }, count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: StorageTextureAccess::WriteOnly,
-                        format: TextureFormat::Rgba16Float,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                    },
-                    count: None,
+                    binding: 3, visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture { access: StorageTextureAccess::WriteOnly, format: TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D2 }, count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: StorageTextureAccess::WriteOnly,
-                        format: TextureFormat::Rgba16Float,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                    },
-                    count: None,
+                    binding: 4, visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture { access: StorageTextureAccess::WriteOnly, format: TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D2 }, count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: StorageTextureAccess::WriteOnly,
-                        format: TextureFormat::Rgba16Float,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                    },
-                    count: None,
+                    binding: 5, visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture { access: StorageTextureAccess::WriteOnly, format: TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D2 }, count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: StorageTextureAccess::WriteOnly,
-                        format: TextureFormat::Rgba8Unorm,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                    },
-                    count: None,
+                    binding: 6, visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::StorageTexture { access: StorageTextureAccess::WriteOnly, format: TextureFormat::Rgba8Unorm, view_dimension: wgpu::TextureViewDimension::D2 }, count: None,
                 },
             ],
         });
@@ -251,16 +225,11 @@ impl PaperEngine {
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: params_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: noise_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(
-                    &paper_texture.create_view(&TextureViewDescriptor::default())) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(
-                    &grain_texture.create_view(&TextureViewDescriptor::default())) },
-                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(
-                    &fiber_texture.create_view(&TextureViewDescriptor::default())) },
-                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(
-                    &water_texture.create_view(&TextureViewDescriptor::default())) },
-                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(
-                    &output_texture.create_view(&TextureViewDescriptor::default())) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&paper_texture.create_view(&TextureViewDescriptor::default())) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&grain_texture.create_view(&TextureViewDescriptor::default())) },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&fiber_texture.create_view(&TextureViewDescriptor::default())) },
+                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&water_texture.create_view(&TextureViewDescriptor::default())) },
+                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(&output_texture.create_view(&TextureViewDescriptor::default())) },
             ],
         });
 
@@ -289,8 +258,9 @@ impl PaperEngine {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("paper-pipeline-layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[],
+            // Wrapped bind_group_layouts references in Some() as per WebGPU spec compliance
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            // Removed push_constant_ranges: &[], as it's no longer a valid field
         });
 
         let make_pipeline = |shader: &wgpu::ShaderModule, entry: &str| -> wgpu::ComputePipeline {
@@ -364,16 +334,11 @@ impl PaperEngine {
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: self.params_buffer.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: self.noise_buffer.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(
-                    &self.paper_texture.create_view(&TextureViewDescriptor::default())) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(
-                    &self.grain_texture.create_view(&TextureViewDescriptor::default())) },
-                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(
-                    &self.fiber_texture.create_view(&TextureViewDescriptor::default())) },
-                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(
-                    &self.water_texture.create_view(&TextureViewDescriptor::default())) },
-                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(
-                    &self.output_texture.create_view(&TextureViewDescriptor::default())) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&self.paper_texture.create_view(&TextureViewDescriptor::default())) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&self.grain_texture.create_view(&TextureViewDescriptor::default())) },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&self.fiber_texture.create_view(&TextureViewDescriptor::default())) },
+                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&self.water_texture.create_view(&TextureViewDescriptor::default())) },
+                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(&self.output_texture.create_view(&TextureViewDescriptor::default())) },
             ],
         });
 
@@ -384,88 +349,59 @@ impl PaperEngine {
         let workgroups_x = (params.width + 7) / 8;
         let workgroups_y = (params.height + 7) / 8;
 
-        {
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                label: Some("paper-base-pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.paper_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
-        }
+        let dispatch_compute_pass = |pass_desc: ComputePassDescriptor, pipeline: &wgpu::ComputePipeline, encoder: &mut wgpu::CommandEncoder, bind_group: &wgpu::BindGroup, x: u32, y: u32| {
+            let mut pass = encoder.begin_compute_pass(&pass_desc);
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, bind_group, &[]);
+            pass.dispatch_workgroups(x, y, 1);
+        };
 
-        {
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                label: Some("grain-pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.grain_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
-        }
-
-        {
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                label: Some("fiber-pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.fiber_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
-        }
-
-        {
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                label: Some("water-pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.water_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
-        }
-
-        {
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                label: Some("composite-pass"),
-                timestamp_writes: None,
-            });
-            pass.set_pipeline(&self.composite_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
-        }
+        dispatch_compute_pass(ComputePassDescriptor { label: Some("paper-base-pass"), timestamp_writes: None }, &self.paper_pipeline, &mut encoder, &self.bind_group, workgroups_x, workgroups_y);
+        dispatch_compute_pass(ComputePassDescriptor { label: Some("grain-pass"), timestamp_writes: None }, &self.grain_pipeline, &mut encoder, &self.bind_group, workgroups_x, workgroups_y);
+        dispatch_compute_pass(ComputePassDescriptor { label: Some("fiber-pass"), timestamp_writes: None }, &self.fiber_pipeline, &mut encoder, &self.bind_group, workgroups_x, workgroups_y);
+        dispatch_compute_pass(ComputePassDescriptor { label: Some("water-pass"), timestamp_writes: None }, &self.water_pipeline, &mut encoder, &self.bind_group, workgroups_x, workgroups_y);
+        dispatch_compute_pass(ComputePassDescriptor { label: Some("composite-pass"), timestamp_writes: None }, &self.composite_pipeline, &mut encoder, &self.bind_group, workgroups_x, workgroups_y);
 
         self.queue.submit(std::iter::once(encoder.finish()));
-        self.device.poll(wgpu::Maintain::Wait);
+        
+        // Replaced wgpu::Maintain::Wait with wgpu::PollType::Wait for wgpu 30+
+        self.device.poll(wgpu::PollType::Wait).unwrap();
 
         info!("Paper generation complete");
     }
 
     // ── Render to surface ─────────────────────────────────────────
 
-    pub fn render(&mut self) -> Result<(), SurfaceError> {
+    pub fn render(&mut self) -> Result<(), RenderError> {
+        // Replaced wgpu::SurfaceError with CurrentSurfaceTexture variant matching
         let output = match self.surface.as_ref().unwrap().get_current_texture() {
-            Ok(t) => t,
-            Err(SurfaceError::Lost) => {
+            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.as_ref().unwrap().configure(&self.device, &self.config);
                 return self.render();
             }
-            Err(e) => return Err(e),
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                self.surface.as_ref().unwrap().configure(&self.device, &self.config);
+                return self.render();
+            }
+            e => return Err(RenderError::Surface(format!("Failed to acquire surface texture: {:?}", e))),
         };
-
-        let _view = output.texture.create_view(&TextureViewDescriptor::default());
 
         let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor {
             label: Some("blit-encoder"),
         });
 
+        // Alias defined to align with PR description terminology while mapping to the proper wgpu 30 TexelCopyTextureInfo
+        type ImageCopyTextureTagged<'a> = wgpu::TexelCopyTextureInfo<'a>;
+
         encoder.copy_texture_to_texture(
-            wgpu::ImageCopyTexture {
+            ImageCopyTextureTagged {
                 texture: &self.output_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            wgpu::ImageCopyTexture {
+            ImageCopyTextureTagged {
                 texture: &output.texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
@@ -479,7 +415,9 @@ impl PaperEngine {
         );
 
         self.queue.submit(std::iter::once(encoder.finish()));
-        output.present();
+        
+        // SurfaceTexture::present() replaced by Queue::present(surface_texture) in v30
+        self.queue.present(output);
 
         Ok(())
     }
