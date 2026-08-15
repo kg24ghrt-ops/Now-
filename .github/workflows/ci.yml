@@ -1,37 +1,60 @@
-name: Android Library
+name: Android NDK Build
 
 on:
   push:
-    branches: [main]
-    tags: ["v*"]
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
-permissions:
-  contents: read
+env:
+  CARGO_TERM_COLOR: always
+  # 可在此定义NDK版本，便于统一管理
+  NDK_VERSION: "r27b" # 参考示例中的版本[reference:4]
 
 jobs:
-  build:
+  build-android:
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        # 定义需要构建的目标架构[reference:5]
+        target: [arm64-v8a, armeabi-v7a, x86_64]
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout 代码
+        uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      # 1. 设置 Rust 工具链
+      - name: 安装 Rust 工具链
+        uses: actions-rs/toolchain@v1
         with:
-          targets: aarch64-linux-android
+          toolchain: stable
+          override: true
 
-      - name: Build Android library
+      # 2. 安装 Android NDK
+      # 使用第三方 action 自动下载并设置 NDK 环境变量[reference:6]
+      - name: 安装 NDK
+        uses: android-actions/setup-android@v3
+
+      # 3. 安装 cargo-ndk
+      # 使用 cargo-binstall 可大幅加快安装速度[reference:7][reference:8]
+      - name: 安装 cargo-binstall 和 cargo-ndk
         run: |
-          cargo ndk \
-            -t arm64-v8a \
-            -o ./artifacts \
-            build \
-            --release \
-            -p editor-ffi
+          cargo install cargo-binstall
+          cargo binstall cargo-ndk -y
 
-      - name: Upload .so
+      # 4. 添加 Rust 编译目标
+      - name: 添加 Android 目标平台
+        run: |
+          rustup target add aarch64-linux-android   # 对应 arm64-v8a[reference:9]
+          rustup target add armv7-linux-androideabi # 对应 armeabi-v7a[reference:10]
+          rustup target add x86_64-linux-android    # 对应 x86_64[reference:11]
+
+      # 5. 执行 Android 构建
+      - name: 构建 Android 库 (Release)
+        run: cargo ndk -t ${{ matrix.target }} build --release
+
+      # (可选) 6. 上传构建产物
+      - name: 上传产物 (共享库)
         uses: actions/upload-artifact@v4
         with:
-          name: libeditor-ffi-android
-          path: artifacts/**/*.so
-          if-no-files-found: error
+          name: librs_${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/librs.so
