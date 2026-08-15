@@ -21,17 +21,29 @@ pub struct PointSample {
 /// Defines how fatigue decays over time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FatigueCurve {
+<<<<<<< HEAD
     pub initial: f32,      // 0..1, starting fatigue
     pub decay_rate: f32,   // per second
     pub max_fatigue: f32,  // 0..1
+=======
+    pub initial: f32,     // 0..1, starting fatigue
+    pub decay_rate: f32,  // per second
+    pub max_fatigue: f32, // 0..1
+>>>>>>> 10a2e384a4cf16906b5af5bbf53a8e7aa8d1d568
 }
 
 /// Tremor parameters – sinusoidal jitter.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TremorParams {
+<<<<<<< HEAD
     pub frequency: f32,    // Hz
     pub amplitude: f32,    // in pixels
     pub noise_scale: f32,  // additional random jitter
+=======
+    pub frequency: f32,   // Hz
+    pub amplitude: f32,   // in pixels
+    pub noise_scale: f32, // additional random jitter
+>>>>>>> 10a2e384a4cf16906b5af5bbf53a8e7aa8d1d568
 }
 
 /// Pressure decay as the writer tires.
@@ -156,11 +168,10 @@ impl PenSimulator {
         // If this is a new stroke, update slant drift and reset pressure a bit.
         if is_new_stroke {
             let drift = self.rng.gen_range(-1.0..1.0) * self.profile.slant_drift.drift_per_stroke;
-            self.current_slant = (self.current_slant + drift)
-                .clamp(
-                    self.profile.slant_drift.base_slant - self.profile.slant_drift.drift_range,
-                    self.profile.slant_drift.base_slant + self.profile.slant_drift.drift_range,
-                );
+            self.current_slant = (self.current_slant + drift).clamp(
+                self.profile.slant_drift.base_slant - self.profile.slant_drift.drift_range,
+                self.profile.slant_drift.base_slant + self.profile.slant_drift.drift_range,
+            );
             // Slight pressure recovery at start of stroke.
             self.pressure = self.profile.pressure_decay.start_pressure;
         }
@@ -178,7 +189,11 @@ impl PenSimulator {
         for w in path.windows(2) {
             total_len += w[0].distance(w[1]);
         }
-        let duration = if total_len > 0.0 { total_len / speed } else { 0.1 };
+        let duration = if total_len > 0.0 {
+            total_len / speed
+        } else {
+            0.1
+        };
 
         // If we have no length, just emit the first point.
         if total_len < 0.001 {
@@ -329,6 +344,13 @@ mod tests {
         assert!(samples.len() > 10);
         assert!(samples[0].pressure > 0.0);
         // Last point should be near the end.
-        assert!(samples.last().unwrap().position.distance(Point::new(100.0, 0.0)) < 3.0);
+        assert!(
+            samples
+                .last()
+                .unwrap()
+                .position
+                .distance(Point::new(100.0, 0.0))
+                < 3.0
+        );
     }
 }
