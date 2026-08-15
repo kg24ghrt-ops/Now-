@@ -21,29 +21,17 @@ pub struct PointSample {
 /// Defines how fatigue decays over time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FatigueCurve {
-<<<<<<< HEAD
-    pub initial: f32,      // 0..1, starting fatigue
-    pub decay_rate: f32,   // per second
-    pub max_fatigue: f32,  // 0..1
-=======
     pub initial: f32,     // 0..1, starting fatigue
     pub decay_rate: f32,  // per second
     pub max_fatigue: f32, // 0..1
->>>>>>> 10a2e384a4cf16906b5af5bbf53a8e7aa8d1d568
 }
 
 /// Tremor parameters – sinusoidal jitter.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TremorParams {
-<<<<<<< HEAD
-    pub frequency: f32,    // Hz
-    pub amplitude: f32,    // in pixels
-    pub noise_scale: f32,  // additional random jitter
-=======
     pub frequency: f32,   // Hz
     pub amplitude: f32,   // in pixels
     pub noise_scale: f32, // additional random jitter
->>>>>>> 10a2e384a4cf16906b5af5bbf53a8e7aa8d1d568
 }
 
 /// Pressure decay as the writer tires.
@@ -146,10 +134,7 @@ impl PenSimulator {
     }
 
     /// Reset the simulator to a fresh state (keeps the same profile and seed).
-    /// Note: Pcg64 doesn't expose `get_seed()`, so we store the seed separately.
     pub fn reset(&mut self) {
-        // We can't re-seed from the existing RNG easily.
-        // Instead, we'll just reset the state variables to their initial values.
         self.fatigue = self.profile.fatigue_curve.initial;
         self.current_slant = self.profile.slant_drift.base_slant
             + self.rng.gen_range(-0.5..0.5) * self.profile.slant_drift.drift_range;
@@ -159,32 +144,23 @@ impl PenSimulator {
     }
 
     /// Trace along a path (list of points) and produce samples.
-    /// The path is assumed to be in pixel coordinates.
     pub fn trace_path(&mut self, path: &[Point], is_new_stroke: bool) -> Vec<PointSample> {
         if path.is_empty() {
             return Vec::new();
         }
 
-        // If this is a new stroke, update slant drift and reset pressure a bit.
         if is_new_stroke {
             let drift = self.rng.gen_range(-1.0..1.0) * self.profile.slant_drift.drift_per_stroke;
             self.current_slant = (self.current_slant + drift).clamp(
                 self.profile.slant_drift.base_slant - self.profile.slant_drift.drift_range,
                 self.profile.slant_drift.base_slant + self.profile.slant_drift.drift_range,
             );
-            // Slight pressure recovery at start of stroke.
             self.pressure = self.profile.pressure_decay.start_pressure;
         }
 
         let mut samples = Vec::new();
         let speed = self.profile.speed;
 
-        // Interpolate along the path with fixed time steps to get smooth samples.
-        // We'll use a step size of ~2 pixels to keep samples dense.
-        let step_size = 2.0; // pixels
-        let mut current_pos = path[0];
-
-        // Estimate total length to set duration.
         let mut total_len = 0.0;
         for w in path.windows(2) {
             total_len += w[0].distance(w[1]);
@@ -195,25 +171,22 @@ impl PenSimulator {
             0.1
         };
 
-        // If we have no length, just emit the first point.
         if total_len < 0.001 {
-            samples.push(self.sample_at(current_pos, 0.0));
+            samples.push(self.sample_at(path[0], 0.0));
             return samples;
         }
 
         let mut t = 0.0;
-        let dt = 0.005; // 5ms per step, ~200 samples per second.
+        let dt = 0.005;
         let mut seg_len = 0.0;
         let mut seg_idx = 0;
+        let mut current_pos = path[0];
 
-        // Walk through the path segments.
         while t < duration {
-            // Advance along the path.
             let dist = speed * dt;
             let mut pos = current_pos;
-
-            // Move along the path by `dist` pixels.
             let mut moved = 0.0;
+
             while moved < dist && seg_idx < path.len() - 1 {
                 let seg = path[seg_idx + 1] - path[seg_idx];
                 let seg_len_full = seg.hypot();
@@ -224,13 +197,11 @@ impl PenSimulator {
                 let remaining_in_seg = seg_len_full - seg_len;
                 let needed = dist - moved;
                 if needed < remaining_in_seg {
-                    // We stay inside this segment.
                     let frac = needed / seg_len_full;
                     pos = path[seg_idx] + seg * frac;
                     seg_len += needed;
                     moved += needed;
                 } else {
-                    // Move to the end of this segment.
                     pos = path[seg_idx + 1];
                     moved += remaining_in_seg;
                     seg_len = 0.0;
@@ -241,37 +212,29 @@ impl PenSimulator {
                 }
             }
 
-            // If we reached the end, clamp position.
             if seg_idx >= path.len() - 1 {
                 pos = *path.last().unwrap();
             }
 
-            // Update fatigue (only while writing).
-            // Cast dt to f32 for arithmetic with f32 values.
             let dt_f32 = dt as f32;
             self.fatigue = (self.fatigue + self.profile.fatigue_curve.decay_rate * dt_f32)
                 .min(self.profile.fatigue_curve.max_fatigue);
 
-            // Update pressure based on fatigue.
             let pressure_factor = 1.0 - self.fatigue * 0.6;
             let target_pressure = self.profile.pressure_decay.start_pressure
                 + (self.profile.pressure_decay.min_pressure
                     - self.profile.pressure_decay.start_pressure)
                     * (1.0 - pressure_factor);
-            // Smooth pressure transition.
             self.pressure += (target_pressure - self.pressure) * dt_f32 * 5.0;
             self.pressure = self.pressure.clamp(0.0, 1.0);
 
-            // Sample at this position.
             let sample = self.sample_at(pos, self.time + t);
             samples.push(sample);
 
-            // Advance time.
             t += dt;
             current_pos = pos;
         }
 
-        // Ensure we have the last point exactly.
         if let Some(last_sample) = samples.last() {
             if last_sample.position.distance(*path.last().unwrap()) > 0.5 {
                 let final_sample = self.sample_at(*path.last().unwrap(), self.time + duration);
@@ -285,9 +248,7 @@ impl PenSimulator {
         samples
     }
 
-    /// Internal helper to generate a single sample with tremor and slant.
     fn sample_at(&mut self, base_position: Point, time: f64) -> PointSample {
-        // Apply tremor: sinusoidal + noise.
         let freq = self.profile.tremor.frequency as f64;
         let amp = self.profile.tremor.amplitude as f64;
         let noise_scale = self.profile.tremor.noise_scale as f64;
@@ -301,18 +262,15 @@ impl PenSimulator {
 
         let mut pos = base_position + Vec2::new(dx, dy);
 
-        // Apply slant drift: horizontal offset proportional to vertical position.
         let slant_rad = self.current_slant.to_radians() as f64;
-        let slant_offset = pos.y * slant_rad.tan() * 0.1; // subtle
+        let slant_offset = pos.y * slant_rad.tan() * 0.1;
         pos.x += slant_offset;
 
-        // Apply spacing bias (randomized).
         let spacing_noise: f64 = self.rng.gen();
         let spacing_bias = self.profile.spacing_bias.bias_per_char as f64
             + (spacing_noise - 0.5) * self.profile.spacing_bias.jitter_scale as f64;
         pos.x += spacing_bias;
 
-        // Tilt mimics pen angle: small random variations.
         let tilt_x = (self.rng.gen::<f32>() - 0.5) * 0.2;
         let tilt_y = (self.rng.gen::<f32>() - 0.5) * 0.2 + 0.5;
 
@@ -343,7 +301,6 @@ mod tests {
         let samples = sim.trace_path(&path, true);
         assert!(samples.len() > 10);
         assert!(samples[0].pressure > 0.0);
-        // Last point should be near the end.
         assert!(
             samples
                 .last()
