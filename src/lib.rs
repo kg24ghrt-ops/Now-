@@ -86,8 +86,8 @@ impl PaperEngine {
         init_logging();
         info!("PaperEngine::new() — width={}, height={}", width, height);
 
-        // Removed Default trait usage for InstanceDescriptor, initialized properly via new_without_display_handle()
-        let mut instance_desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        // Use the imported InstanceDescriptor directly
+        let mut instance_desc = InstanceDescriptor::new_without_display_handle();
         instance_desc.backends = Backends::VULKAN;
         let instance = Instance::new(instance_desc);
 
@@ -107,11 +107,10 @@ impl PaperEngine {
             power_preference: PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
-            apply_limit_buckets: false, // Added required field for wgpu v30+
+            apply_limit_buckets: false,
         }).await.expect("No GPU adapter found");
 
         let (device, queue) = adapter.request_device(
-            // Removed extra `None` argument (trace path) as it's now part of DeviceDescriptor
             &DeviceDescriptor {
                 label: Some("paper-device"),
                 required_features: Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
@@ -258,9 +257,9 @@ impl PaperEngine {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("paper-pipeline-layout"),
-            // Wrapped bind_group_layouts references in Some() as per WebGPU spec compliance
             bind_group_layouts: &[Some(&bind_group_layout)],
-            // Removed push_constant_ranges: &[], as it's no longer a valid field
+            // Specify the size of immediate data (push constants). 0 bytes since we don't use them.
+            immediate_size: 0, 
         });
 
         let make_pipeline = |shader: &wgpu::ShaderModule, entry: &str| -> wgpu::ComputePipeline {
@@ -364,8 +363,8 @@ impl PaperEngine {
 
         self.queue.submit(std::iter::once(encoder.finish()));
         
-        // Replaced wgpu::Maintain::Wait with wgpu::PollType::Wait for wgpu 30+
-        self.device.poll(wgpu::PollType::Wait).unwrap();
+        // Wait indefinitely for the queue to finish processing submitted commands
+        self.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
 
         info!("Paper generation complete");
     }
@@ -373,7 +372,6 @@ impl PaperEngine {
     // ── Render to surface ─────────────────────────────────────────
 
     pub fn render(&mut self) -> Result<(), RenderError> {
-        // Replaced wgpu::SurfaceError with CurrentSurfaceTexture variant matching
         let output = match self.surface.as_ref().unwrap().get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             wgpu::CurrentSurfaceTexture::Lost => {
@@ -391,7 +389,6 @@ impl PaperEngine {
             label: Some("blit-encoder"),
         });
 
-        // Alias defined to align with PR description terminology while mapping to the proper wgpu 30 TexelCopyTextureInfo
         type ImageCopyTextureTagged<'a> = wgpu::TexelCopyTextureInfo<'a>;
 
         encoder.copy_texture_to_texture(
@@ -416,7 +413,7 @@ impl PaperEngine {
 
         self.queue.submit(std::iter::once(encoder.finish()));
         
-        // SurfaceTexture::present() replaced by Queue::present(surface_texture) in v30
+        // Present the copied output to the screen
         self.queue.present(output);
 
         Ok(())
