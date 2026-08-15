@@ -1,5 +1,4 @@
-use std::ffi::{c_void, CStr};
-use std::sync::Arc;
+use std::ffi::c_void;
 use log::info;
 use wgpu::{
     Backends, BufferDescriptor, BufferUsages, CommandEncoderDescriptor, ComputePassDescriptor,
@@ -34,12 +33,12 @@ pub struct PaperParams {
     pub width: u32,
     pub height: u32,
     pub seed: u32,
-    pub grain_intensity: f32,      // 0.0 - 1.0
-    pub fiber_density: f32,        // 0.0 - 1.0
-    pub water_stain_count: u32,    // 0 - 20
-    pub aging_yellow: f32,         // 0.0 - 1.0
-    pub fiber_direction: f32,      // radians
-    pub roughness: f32,            // 0.0 - 1.0
+    pub grain_intensity: f32,
+    pub fiber_density: f32,
+    pub water_stain_count: u32,
+    pub aging_yellow: f32,
+    pub fiber_direction: f32,
+    pub roughness: f32,
     pub _pad: [f32; 2],
 }
 
@@ -82,8 +81,11 @@ impl PaperEngine {
                 std::ptr::NonNull::new(raw_window as *mut _).unwrap()
             );
             let raw = RawWindowHandle::AndroidNdk(handle);
-            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle { raw_handle: raw })
-                .expect("Failed to create Android surface")
+            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: None,
+                raw_window_handle: raw,
+            })
+            .expect("Failed to create Android surface")
         };
 
         let adapter = instance.request_adapter(&RequestAdapterOptions {
@@ -97,6 +99,8 @@ impl PaperEngine {
                 required_features: Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
                 required_limits: Limits::default(),
                 label: Some("paper-device"),
+                memory_hints: Default::default(),
+                trace: wgpu::Trace::Off,
             },
             None,
         ).await.expect("Failed to create device");
@@ -156,17 +160,16 @@ impl PaperEngine {
 
         let noise_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("noise-seed"),
-            size: 256 * 4, // 256 random u32s
+            size: 256 * 4,
             usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        // ── Bind group layout (all pipelines share this) ───────────
+        // ── Bind group layout ────────────────────────────────────────
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("paper-bind-layout"),
             entries: &[
-                // params uniform
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -177,7 +180,6 @@ impl PaperEngine {
                     },
                     count: None,
                 },
-                // noise storage
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -188,7 +190,6 @@ impl PaperEngine {
                     },
                     count: None,
                 },
-                // paper texture (write)
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -199,7 +200,6 @@ impl PaperEngine {
                     },
                     count: None,
                 },
-                // grain texture (write)
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -210,7 +210,6 @@ impl PaperEngine {
                     },
                     count: None,
                 },
-                // fiber texture (write)
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -221,7 +220,6 @@ impl PaperEngine {
                     },
                     count: None,
                 },
-                // water texture (write)
                 wgpu::BindGroupLayoutEntry {
                     binding: 5,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -232,7 +230,6 @@ impl PaperEngine {
                     },
                     count: None,
                 },
-                // output texture (write)
                 wgpu::BindGroupLayoutEntry {
                     binding: 6,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -354,14 +351,11 @@ impl PaperEngine {
     pub fn generate(&mut self, params: &PaperParams) {
         info!("Generating paper: {}x{}, seed={}", params.width, params.height, params.seed);
 
-        // Upload params
         self.queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(params));
 
-        // Upload noise seed
         let noise = self.generate_noise_seed();
         self.queue.write_buffer(&self.noise_buffer, 0, bytemuck::cast_slice(&noise));
 
-        // Recreate bind group (textures may have been resized)
         self.bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("paper-bind-group"),
             layout: &self.bind_group_layout,
@@ -388,7 +382,6 @@ impl PaperEngine {
         let workgroups_x = (params.width + 7) / 8;
         let workgroups_y = (params.height + 7) / 8;
 
-        // Pass 1: Base paper color + aging
         {
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
                 label: Some("paper-base-pass"),
@@ -399,7 +392,6 @@ impl PaperEngine {
             pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
         }
 
-        // Pass 2: Grain
         {
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
                 label: Some("grain-pass"),
@@ -410,7 +402,6 @@ impl PaperEngine {
             pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
         }
 
-        // Pass 3: Fiber texture
         {
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
                 label: Some("fiber-pass"),
@@ -421,7 +412,6 @@ impl PaperEngine {
             pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
         }
 
-        // Pass 4: Water stains
         {
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
                 label: Some("water-pass"),
@@ -432,7 +422,6 @@ impl PaperEngine {
             pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
         }
 
-        // Pass 5: Composite everything
         {
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
                 label: Some("composite-pass"),
@@ -461,13 +450,12 @@ impl PaperEngine {
             Err(e) => return Err(e),
         };
 
-        let view = output.texture.create_view(&TextureViewDescriptor::default());
+        let _view = output.texture.create_view(&TextureViewDescriptor::default());
 
         let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor {
             label: Some("blit-encoder"),
         });
 
-        // Blit output_texture to surface using texture copy
         encoder.copy_texture_to_texture(
             wgpu::ImageCopyTexture {
                 texture: &self.output_texture,

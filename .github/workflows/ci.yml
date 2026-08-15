@@ -1,60 +1,74 @@
-name: Android NDK Build
+name: Build Android .so (Blazing Fast)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ main ]
 
 env:
   CARGO_TERM_COLOR: always
-  # 可在此定义NDK版本，便于统一管理
-  NDK_VERSION: "r27b" # 参考示例中的版本[reference:4]
 
 jobs:
-  build-android:
+  build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        # 定义需要构建的目标架构[reference:5]
-        target: [arm64-v8a, armeabi-v7a, x86_64]
+        target: [aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android]
+        include:
+          - target: aarch64-linux-android
+            alias: arm64-v8a
+          - target: armv7-linux-androideabi
+            alias: armeabi-v7a
+          - target: x86_64-linux-android
+            alias: x86_64
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.target }}
+      cancel-in-progress: true
+
     steps:
-      - name: Checkout 代码
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # 1. 设置 Rust 工具链
-      - name: 安装 Rust 工具链
-        uses: actions-rs/toolchain@v1
+      # ---------- Rust ----------
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          override: true
+          targets: ${{ matrix.target }}
 
-      # 2. 安装 Android NDK
-      # 使用第三方 action 自动下载并设置 NDK 环境变量[reference:6]
-      - name: 安装 NDK
-        uses: android-actions/setup-android@v3
+      # ---------- Android NDK (with local caching) ----------
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+          local-cache: true
 
-      # 3. 安装 cargo-ndk
-      # 使用 cargo-binstall 可大幅加快安装速度[reference:7][reference:8]
-      - name: 安装 cargo-binstall 和 cargo-ndk
+      # ---------- Cache Cargo ----------
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}-
+            ${{ runner.os }}-cargo-
+
+      # ---------- Install cargo-ndk (pre-built binary) ----------
+      - name: Install cargo-ndk
         run: |
-          cargo install cargo-binstall
-          cargo binstall cargo-ndk -y
+          cargo install cargo-binstall --no-confirm
+          cargo binstall cargo-ndk --no-confirm
 
-      # 4. 添加 Rust 编译目标
-      - name: 添加 Android 目标平台
-        run: |
-          rustup target add aarch64-linux-android   # 对应 arm64-v8a[reference:9]
-          rustup target add armv7-linux-androideabi # 对应 armeabi-v7a[reference:10]
-          rustup target add x86_64-linux-android    # 对应 x86_64[reference:11]
+      # ---------- Build .so ----------
+      - name: Build Android library
+        run: cargo ndk -t ${{ matrix.alias }} build --release
 
-      # 5. 执行 Android 构建
-      - name: 构建 Android 库 (Release)
-        run: cargo ndk -t ${{ matrix.target }} build --release
-
-      # (可选) 6. 上传构建产物
-      - name: 上传产物 (共享库)
+      # ---------- Upload artifact ----------
+      - name: Upload .so
         uses: actions/upload-artifact@v4
         with:
-          name: librs_${{ matrix.target }}
+          name: librs_${{ matrix.alias }}
           path: target/${{ matrix.target }}/release/librs.so
