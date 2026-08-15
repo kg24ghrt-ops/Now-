@@ -16,10 +16,10 @@ use lyon::tessellation::{StrokeOptions, StrokeTessellator, VertexBuffers};
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct InkVertex {
     pub position: [f32; 3], // x, y, z (z is layer depth, unused for now)
-    pub uv: [f32; 2], // paper texture coordinates (will be set later)
-    pub pressure: f32, // 0..1
-    pub wetness: f32, // 0..1, controls ink diffusion
-    pub normal: [f32; 2], // for lighting effects
+    pub uv: [f32; 2],       // paper texture coordinates (will be set later)
+    pub pressure: f32,      // 0..1
+    pub wetness: f32,       // 0..1, controls ink diffusion
+    pub normal: [f32; 2],   // for lighting effects
 }
 
 /// A complete ink mesh ready for GPU upload.
