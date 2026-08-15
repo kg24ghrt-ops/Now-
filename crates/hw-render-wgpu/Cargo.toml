@@ -6,7 +6,12 @@ edition = "2021"
 [dependencies]
 wgpu = { workspace = true, features = ["spirv", "glsl"] }
 bytemuck = { workspace = true, features = ["derive"] }
-pollster = { version = "0.3" }  # for blocking async
 thiserror = { workspace = true }
+pollster = { workspace = true }
+raw-window-handle = "0.6"
+naga = { version = "24.0", features = ["glsl-in"] }
+
+# Internal
 hw-ink = { path = "../hw-ink" }
 hw-paper = { path = "../hw-paper" }
+hw-physics = { path = "../hw-physics" }

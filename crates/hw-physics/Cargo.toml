@@ -4,8 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-kurbo = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-rand = { workspace = true }
-rand_pcg = { workspace = true }
+bytemuck = { workspace = true, features = ["derive"] }
 thiserror = { workspace = true }
+
+[dependencies.android-activity]
+version = "0.6"
+optional = true
+
+[features]
+default = []
+android = ["android-activity"]
