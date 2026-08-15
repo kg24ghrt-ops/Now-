@@ -38,7 +38,7 @@ pub struct PaperParams {
     pub fiber_density: f32,        // 0.0 - 1.0
     pub water_stain_count: u32,    // 0 - 20
     pub aging_yellow: f32,         // 0.0 - 1.0
-    pub fiber_direction: f32,       // radians
+    pub fiber_direction: f32,      // radians
     pub roughness: f32,            // 0.0 - 1.0
     pub _pad: [f32; 2],
 }
@@ -462,10 +462,35 @@ impl PaperEngine {
         };
 
         let view = output.texture.create_view(&TextureViewDescriptor::default());
-        let output_view = self.output_texture.create_view(&TextureViewDescriptor::default());
 
         let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor {
             label: Some("blit-encoder"),
         });
 
-        // Blit output_texture to surface using a simple render
+        // Blit output_texture to surface using texture copy
+        encoder.copy_texture_to_texture(
+            wgpu::ImageCopyTexture {
+                texture: &self.output_texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::ImageCopyTexture {
+                texture: &output.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: self.config.width,
+                height: self.config.height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok(())
+    }
+}
