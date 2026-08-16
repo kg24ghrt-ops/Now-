@@ -1,84 +1,66 @@
-// Paper fiber: directional cellulose strands
-// Creates the wood grain / fiber texture effect
+// Directional cellulose fibers. Real fibers are short curved strands, not sine
+// lines: we use strongly anisotropic, domain-warped noise (long along the fiber
+// axis, tiny across it) plus sparse bright "hairs".
+// R = strand shadow mask, G = hair highlight mask (composite tints them apart).
 
-@group(0) @binding(0)
-var params: PaperParams;
-
-@group(0) @binding(1)
-var noise_seed: array<u32>;
+@group(0) @binding(0) var<uniform> params: PaperParams;
 
 struct PaperParams {
-    width: u32,
-    height: u32,
-    seed: u32,
-    grain_intensity: f32,
-    fiber_density: f32,
-    water_stain_count: u32,
-    aging_yellow: f32,
-    fiber_direction: f32,
-    roughness: f32,
-    _pad: vec2<f32>,
+    width: u32, height: u32, seed: u32,
+    grain_intensity: f32, fiber_density: f32, water_stain_count: u32,
+    aging_yellow: f32, fiber_direction: f32, roughness: f32,
+    _pad0: f32, _pad1: f32,
 };
 
-@group(0) @binding(4)
-var fiber_out: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(4) var fiber_out: texture_storage_2d<rgba16float, write>;
 
-fn hash_u32(n: u32) -> u32 {
-    var x = n;
-    x = ((x >> 16u) ^ x) * 0x45d9f3bu;
-    x = ((x >> 16u) ^ x) * 0x45d9f3bu;
-    x = (x >> 16u) ^ x;
-    return x;
+fn h21(p: vec2<u32>, seed: u32) -> f32 {
+    var v = p.x * 374761393u + p.y * 668265263u + seed * 1442695041u;
+    v = (v ^ (v >> 13u)) * 1274126177u;
+    return f32(v ^ (v >> 16u)) * (1.0 / 4294967295.0);
 }
 
-fn hash_f32(n: u32) -> f32 {
-    return f32(hash_u32(n)) / 4294967295.0;
+fn vnoise(p: vec2<f32>, seed: u32) -> f32 {
+    let ip = floor(p); let fp = fract(p);
+    let u = fp * fp * fp * (fp * (fp * 6.0 - 15.0) + 10.0);
+    let a = h21(vec2<u32>(u32(ip.x), u32(ip.y)), seed);
+    let b = h21(vec2<u32>(u32(ip.x)+1u, u32(ip.y)), seed);
+    let c = h21(vec2<u32>(u32(ip.x), u32(ip.y)+1u), seed);
+    let d = h21(vec2<u32>(u32(ip.x)+1u, u32(ip.y)+1u), seed);
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-fn hash2d(x: u32, y: u32, seed: u32) -> f32 {
-    let n = x * 374761393u + y * 668265263u + seed * 1013904243u;
-    return hash_f32(n);
+fn fbm(p: vec2<f32>, seed: u32, octaves: u32) -> f32 {
+    var sum = 0.0; var amp = 0.55; var q = p;
+    let rot = mat2x2<f32>(0.8, 0.6, -0.6, 0.8);
+    for (var i = 0u; i < octaves; i = i + 1u) {
+        sum += amp * vnoise(q, seed + i);
+        q = rot * (q * 2.03);
+        amp *= 0.5;
+    }
+    return sum;
 }
 
-fn value_noise(x: f32, y: f32, seed: u32) -> f32 {
-    let ix = u32(floor(x));
-    let iy = u32(floor(y));
-    let fx = fract(x);
-    let fy = fract(y);
-    let fx_s = fx * fx * (3.0 - 2.0 * fx);
-    let fy_s = fy * fy * (3.0 - 2.0 * fy);
-    let n00 = hash2d(ix, iy, seed);
-    let n10 = hash2d(ix + 1u, iy, seed);
-    let n01 = hash2d(ix, iy + 1u, seed);
-    let n11 = hash2d(ix + 1u, iy + 1u, seed);
-    return mix(mix(n00, n10, fx_s), mix(n01, n11, fx_s), fy_s);
-}
-
-@compute @workgroup_size(8, 8, 1)
+@compute @workgroup_size(16, 16, 1)
 fn fiber(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= params.width || gid.y >= params.height) { return; }
+    let uv = vec2<f32>(f32(gid.x) / f32(params.width), f32(gid.y) / f32(params.height));
 
-    let uv = vec2<f32>(
-        f32(gid.x) / f32(params.width),
-        f32(gid.y) / f32(params.height)
-    );
+    let a = params.fiber_direction;
+    let dir  = vec2<f32>(cos(a), sin(a));
+    let perp = vec2<f32>(-dir.y, dir.x);
+    let along  = dot(uv, dir);
+    let across = dot(uv, perp);
 
-    let dir = vec2<f32>(cos(params.fiber_direction), sin(params.fiber_direction));
-    let proj = dot(uv, dir);
-    let perp = dot(uv, vec2<f32>(-dir.y, dir.x));
+    // Strong anisotropy → elongated strand structures; warp bends them organically
+    let warp = fbm(vec2<f32>(along * 8.0, across * 40.0), params.seed + 300u, 2u) - 0.5;
+    let strands = fbm(vec2<f32>(along * 22.0, across * 160.0) + vec2<f32>(0.0, warp * 3.0),
+                      params.seed + 31u, 4u);
+    let strand_mask = smoothstep(0.35, 0.75, strands) * params.fiber_density;
 
-    let density = params.fiber_density * 50.0 + 10.0;
-    
-    var fiber = 0.0;
-    for (var i: u32 = 0u; i < 5u; i = i + 1u) {
-        let offset = hash_f32(params.seed + i * 7919u) * 2.0 - 1.0;
-        let freq = density * (1.0 + f32(i) * 0.3);
-        let line = sin((proj + offset * 0.05 + perp * 0.02 * hash_f32(i + 100u)) * freq);
-        fiber += line * line * (0.5 + params.roughness * 0.5);
-    }
-    
-    fiber = fiber * params.fiber_density * 0.15;
-    fiber = clamp(fiber, 0.0, 1.0);
-    
-    textureStore(fiber_out, vec2<i32>(i32(gid.x), i32(gid.y)), vec4<f32>(fiber, fiber, fiber, 1.0));
+    // Sparse bright filaments ("hairs"), ~1–2 px thick at 1080p
+    let hair_n = fbm(vec2<f32>(along * 60.0, across * 900.0), params.seed + 320u, 2u);
+    let hair = smoothstep(0.80, 0.92, hair_n) * params.fiber_density * (0.3 + 0.7 * params.roughness);
+
+    textureStore(fiber_out, vec2<i32>(i32(gid.x), i32(gid.y)), vec4<f32>(strand_mask, hair, 0.0, 1.0));
 }
