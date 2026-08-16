@@ -8,7 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Strips debug symbols for significantly smaller .so file sizes on mobile
+  # Strip debug symbols for significantly smaller .so file sizes on mobile
   RUSTFLAGS: "-C strip=symbols"
 
 jobs:
@@ -50,6 +50,7 @@ jobs:
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r27c
+          # add-to-path: true automatically exports ANDROID_NDK_HOME and ANDROID_NDK_ROOT
           add-to-path: true
 
       - name: Rust Cache
@@ -58,7 +59,9 @@ jobs:
           shared-key: "android-build"
 
       - name: Install cargo-ndk
-        uses: taiki-e/install-action@cargo-ndk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
 
       - name: Build Android libraries
         # The -o flag automatically organizes output into the standard Android Studio structure
