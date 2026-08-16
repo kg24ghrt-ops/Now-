@@ -8,13 +8,21 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Strips debug symbols for significantly smaller .so file sizes on mobile
+  RUSTFLAGS: "-C strip=symbols"
 
 jobs:
   build:
+    name: Build (${{ matrix.alias }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        target: [aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android]
+        target:
+          - aarch64-linux-android
+          - armv7-linux-androideabi
+          - x86_64-linux-android
+          - i686-linux-android
         include:
           - target: aarch64-linux-android
             alias: arm64-v8a
@@ -22,62 +30,46 @@ jobs:
             alias: armeabi-v7a
           - target: x86_64-linux-android
             alias: x86_64
+          - target: i686-linux-android
+            alias: x86
+
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}-${{ matrix.target }}
       cancel-in-progress: true
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      # ---------- Rust ----------
-      - name: Install Rust
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      # ---------- Android NDK (cached) ----------
       - name: Setup Android NDK
         uses: nttld/setup-ndk@v1
         with:
           ndk-version: r27c
-          local-cache: true
+          add-to-path: true
 
-      # ---------- Cache Cargo ----------
-      - name: Cache Cargo
-        uses: actions/cache@v4
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-${{ matrix.target }}-
-            ${{ runner.os }}-cargo-
+          shared-key: "android-build"
 
-      # ---------- Install cargo-binstall (pre-built binary) ----------
-      - name: Install cargo-binstall
-        run: |
-          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-          # or manually download:
-          # curl -L -o ~/.cargo/bin/cargo-binstall https://github.com/cargo-bins/cargo-binstall/releases/latest/download/cargo-binstall-x86_64-unknown-linux-musl.tgz
-          # tar -xzf - -C ~/.cargo/bin
-      # Ensure it's executable
-      - name: Make cargo-binstall executable
-        run: chmod +x ~/.cargo/bin/cargo-binstall
-
-      # ---------- Install cargo-ndk (pre-built) ----------
       - name: Install cargo-ndk
-        run: cargo binstall cargo-ndk --no-confirm
+        uses: taiki-e/install-action@cargo-ndk
 
-      # ---------- Build .so ----------
-      - name: Build Android library
-        run: cargo ndk -t ${{ matrix.alias }} build --release
+      - name: Build Android libraries
+        # The -o flag automatically organizes output into the standard Android Studio structure
+        run: cargo ndk -t ${{ matrix.alias }} -o jniLibs build --release
 
-      # ---------- Upload artifact ----------
-      - name: Upload .so
+      - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: librs_${{ matrix.alias }}
-          path: target/${{ matrix.target }}/release/librs.so
+          name: android-libs-${{ matrix.alias }}
+          # Automatically picks up your library regardless of its Cargo.toml name
+          path: |
+            jniLibs/${{ matrix.alias }}/*.so
+            target/${{ matrix.target }}/release/*.a
+          if-no-files-found: error
