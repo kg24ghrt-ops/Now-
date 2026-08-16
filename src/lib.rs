@@ -233,7 +233,7 @@ impl PaperEngine {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("paper-pipeline-layout"),
             bind_group_layouts: &[Some(&bind_group_layout)],
-            immediate_size: 0, // Added for wgpu v30 compliance
+            immediate_size: 0,
         });
 
         let make_pipeline = |shader: &wgpu::ShaderModule, entry: &str| -> wgpu::ComputePipeline {
@@ -247,18 +247,34 @@ impl PaperEngine {
             })
         };
 
+        // FIX: Create pipelines BEFORE moving `device` into the struct
+        let paper_pipeline = make_pipeline(&paper_shader, "paper_base");
+        let grain_pipeline = make_pipeline(&grain_shader, "grain");
+        let fiber_pipeline = make_pipeline(&fiber_shader, "fiber");
+        let water_pipeline = make_pipeline(&water_shader, "water");
+        let composite_pipeline = make_pipeline(&composite_shader, "composite");
+
+        // Now `device` is safely moved into the struct
         Self {
             instance,
             surface: Some(surface),
-            device, queue, config,
-            paper_pipeline: make_pipeline(&paper_shader, "paper_base"),
-            grain_pipeline: make_pipeline(&grain_shader, "grain"),
-            fiber_pipeline: make_pipeline(&fiber_shader, "fiber"),
-            water_pipeline: make_pipeline(&water_shader, "water"),
-            composite_pipeline: make_pipeline(&composite_shader, "composite"),
-            params_buffer, noise_buffer,
-            paper_texture, grain_texture, fiber_texture, water_texture, output_texture,
-            bind_group_layout, bind_group,
+            device,
+            queue,
+            config,
+            paper_pipeline,
+            grain_pipeline,
+            fiber_pipeline,
+            water_pipeline,
+            composite_pipeline,
+            params_buffer,
+            noise_buffer,
+            paper_texture,
+            grain_texture,
+            fiber_texture,
+            water_texture,
+            output_texture,
+            bind_group_layout,
+            bind_group,
         }
     }
 
@@ -298,7 +314,7 @@ impl PaperEngine {
 
         let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor { label: Some("paper-encoder") });
         
-        // Note: Using 16 here to match the new 16x16 workgroup size in the shaders.
+        // Matches the 16x16 workgroup size used in the updated shaders.
         // If you kept the old 8x8 shaders, change 15->7 and 16->8.
         let workgroups_x = (params.width + 15) / 16;
         let workgroups_y = (params.height + 15) / 16;
