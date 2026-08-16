@@ -1,3 +1,27 @@
+//! # Paper Engine
+//!
+//! A high-performance, procedural paper texture generation engine.
+//!
+//! This library leverages WebGPU (via [`wgpu`]) compute shaders to generate
+//! highly realistic paper textures entirely on the GPU. It is designed to be
+//! embedded into mobile applications (e.g., Android via JNI) as a dynamic (`cdylib`)
+//! or static library.
+//!
+//! ## Features
+//!
+//! - **Procedural Generation**: No image assets required. Textures are generated
+//!   mathematically using multi-pass compute shaders.
+//! - **Realistic Details**: Simulates cellulose fibers, pulp grain, coffee/tea
+//!   water stains, laid/chain lines, and paper aging (foxing).
+//! - **High Performance**: Parallelized GPU compute passes with an optimized
+//!   workgroup size of 16x16.
+//!
+//! ## Android Integration
+//!
+//! This crate is compiled as a `cdylib` (`.so`) for Android. You will typically
+//! interact with it via JNI bindings in Kotlin/Java. Ensure you pass the raw
+//! `ANativeWindow` pointer to [`paper_engine_create`].
+
 use std::ffi::c_void;
 use log::info;
 use wgpu::{
@@ -11,7 +35,6 @@ use raw_window_handle::{AndroidNdkWindowHandle, RawWindowHandle};
 use bytemuck::{Pod, Zeroable};
 
 // ── Manual Error Handling for Surface ────────────────────────────────
-
 #[derive(Debug)]
 pub enum RenderError {
     Surface(String),
@@ -26,7 +49,6 @@ impl std::fmt::Display for RenderError {
 impl std::error::Error for RenderError {}
 
 // ── Logging ──────────────────────────────────────────────────────────
-
 #[cfg(target_os = "android")]
 pub fn init_logging() {
     android_logger::init_once(
@@ -41,7 +63,6 @@ pub fn init_logging() {
 }
 
 // ── Paper parameters passed from Kotlin ─────────────────────────────
-
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct PaperParams {
@@ -54,11 +75,10 @@ pub struct PaperParams {
     pub aging_yellow: f32,
     pub fiber_direction: f32,
     pub roughness: f32,
-    pub _pad: [f32; 2],
+    pub _pad: [f32; 2], // Exact match for WGSL scalar padding
 }
 
 // ── GPU state ────────────────────────────────────────────────────────
-
 pub struct PaperEngine {
     instance: Instance,
     surface: Option<Surface<'static>>,
@@ -86,7 +106,6 @@ impl PaperEngine {
         init_logging();
         info!("PaperEngine::new() — width={}, height={}", width, height);
 
-        // Use the imported InstanceDescriptor directly
         let mut instance_desc = InstanceDescriptor::new_without_display_handle();
         instance_desc.backends = Backends::VULKAN;
         let instance = Instance::new(instance_desc);
@@ -140,8 +159,6 @@ impl PaperEngine {
         };
         surface.configure(&device, &config);
 
-        // ── Create intermediate textures ─────────────────────────────
-
         let tex_desc = |label: &str, format: TextureFormat, usage: TextureUsages| -> wgpu::Texture {
             device.create_texture(&TextureDescriptor {
                 label: Some(label),
@@ -166,8 +183,6 @@ impl PaperEngine {
         let output_texture = tex_desc("output", TextureFormat::Rgba8Unorm,
             TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_SRC);
 
-        // ── Buffers ──────────────────────────────────────────────────
-
         let params_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("params"),
             size: std::mem::size_of::<PaperParams>() as u64,
@@ -182,39 +197,16 @@ impl PaperEngine {
             mapped_at_creation: false,
         });
 
-        // ── Bind group layout ────────────────────────────────────────
-
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("paper-bind-layout"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0, visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1, visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2, visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture { access: StorageTextureAccess::WriteOnly, format: TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D2 }, count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3, visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture { access: StorageTextureAccess::WriteOnly, format: TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D2 }, count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4, visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture { access: StorageTextureAccess::WriteOnly, format: TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D2 }, count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5, visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture { access: StorageTextureAccess::WriteOnly, format: TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D2 }, count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6, visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture { access: StorageTextureAccess::WriteOnly, format: TextureFormat::Rgba8Unorm, view_dimension: wgpu::TextureViewDimension::D2 }, count: None,
-                },
+                wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::StorageTexture { access: StorageTextureAccess::WriteOnly, format: TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D2 }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::StorageTexture { access: StorageTextureAccess::WriteOnly, format: TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D2 }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 4, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::StorageTexture { access: StorageTextureAccess::WriteOnly, format: TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D2 }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 5, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::StorageTexture { access: StorageTextureAccess::WriteOnly, format: TextureFormat::Rgba16Float, view_dimension: wgpu::TextureViewDimension::D2 }, count: None },
+                wgpu::BindGroupLayoutEntry { binding: 6, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::StorageTexture { access: StorageTextureAccess::WriteOnly, format: TextureFormat::Rgba8Unorm, view_dimension: wgpu::TextureViewDimension::D2 }, count: None },
             ],
         });
 
@@ -232,34 +224,16 @@ impl PaperEngine {
             ],
         });
 
-        // ── Compile shaders ────────────────────────────────────────
-
-        let paper_shader = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("paper-base-shader"),
-            source: ShaderSource::Wgsl(include_str!("../shaders/paper_base.wgsl").into()),
-        });
-        let grain_shader = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("grain-shader"),
-            source: ShaderSource::Wgsl(include_str!("../shaders/grain.wgsl").into()),
-        });
-        let fiber_shader = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("fiber-shader"),
-            source: ShaderSource::Wgsl(include_str!("../shaders/fiber.wgsl").into()),
-        });
-        let water_shader = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("water-shader"),
-            source: ShaderSource::Wgsl(include_str!("../shaders/water.wgsl").into()),
-        });
-        let composite_shader = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("composite-shader"),
-            source: ShaderSource::Wgsl(include_str!("../shaders/composite.wgsl").into()),
-        });
+        let paper_shader = device.create_shader_module(ShaderModuleDescriptor { label: Some("paper-base-shader"), source: ShaderSource::Wgsl(include_str!("../shaders/paper_base.wgsl").into()) });
+        let grain_shader = device.create_shader_module(ShaderModuleDescriptor { label: Some("grain-shader"), source: ShaderSource::Wgsl(include_str!("../shaders/grain.wgsl").into()) });
+        let fiber_shader = device.create_shader_module(ShaderModuleDescriptor { label: Some("fiber-shader"), source: ShaderSource::Wgsl(include_str!("../shaders/fiber.wgsl").into()) });
+        let water_shader = device.create_shader_module(ShaderModuleDescriptor { label: Some("water-shader"), source: ShaderSource::Wgsl(include_str!("../shaders/water.wgsl").into()) });
+        let composite_shader = device.create_shader_module(ShaderModuleDescriptor { label: Some("composite-shader"), source: ShaderSource::Wgsl(include_str!("../shaders/composite.wgsl").into()) });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("paper-pipeline-layout"),
             bind_group_layouts: &[Some(&bind_group_layout)],
-            // Specify the size of immediate data (push constants). 0 bytes since we don't use them.
-            immediate_size: 0, 
+            immediate_size: 0, // Added for wgpu v30 compliance
         });
 
         let make_pipeline = |shader: &wgpu::ShaderModule, entry: &str| -> wgpu::ComputePipeline {
@@ -273,36 +247,20 @@ impl PaperEngine {
             })
         };
 
-        let paper_pipeline = make_pipeline(&paper_shader, "paper_base");
-        let grain_pipeline = make_pipeline(&grain_shader, "grain");
-        let fiber_pipeline = make_pipeline(&fiber_shader, "fiber");
-        let water_pipeline = make_pipeline(&water_shader, "water");
-        let composite_pipeline = make_pipeline(&composite_shader, "composite");
-
         Self {
             instance,
             surface: Some(surface),
-            device,
-            queue,
-            config,
-            paper_pipeline,
-            grain_pipeline,
-            fiber_pipeline,
-            water_pipeline,
-            composite_pipeline,
-            params_buffer,
-            noise_buffer,
-            paper_texture,
-            grain_texture,
-            fiber_texture,
-            water_texture,
-            output_texture,
-            bind_group_layout,
-            bind_group,
+            device, queue, config,
+            paper_pipeline: make_pipeline(&paper_shader, "paper_base"),
+            grain_pipeline: make_pipeline(&grain_shader, "grain"),
+            fiber_pipeline: make_pipeline(&fiber_shader, "fiber"),
+            water_pipeline: make_pipeline(&water_shader, "water"),
+            composite_pipeline: make_pipeline(&composite_shader, "composite"),
+            params_buffer, noise_buffer,
+            paper_texture, grain_texture, fiber_texture, water_texture, output_texture,
+            bind_group_layout, bind_group,
         }
     }
-
-    // ── Generate noise seed ──────────────────────────────────────
 
     fn generate_noise_seed(&self) -> Vec<u32> {
         use std::collections::hash_map::DefaultHasher;
@@ -317,13 +275,10 @@ impl PaperEngine {
         }).collect()
     }
 
-    // ── Generate paper ────────────────────────────────────────────
-
     pub fn generate(&mut self, params: &PaperParams) {
         info!("Generating paper: {}x{}, seed={}", params.width, params.height, params.seed);
 
         self.queue.write_buffer(&self.params_buffer, 0, bytemuck::bytes_of(params));
-
         let noise = self.generate_noise_seed();
         self.queue.write_buffer(&self.noise_buffer, 0, bytemuck::cast_slice(&noise));
 
@@ -341,35 +296,30 @@ impl PaperEngine {
             ],
         });
 
-        let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor {
-            label: Some("paper-encoder"),
-        });
+        let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor { label: Some("paper-encoder") });
+        
+        // Note: Using 16 here to match the new 16x16 workgroup size in the shaders.
+        // If you kept the old 8x8 shaders, change 15->7 and 16->8.
+        let workgroups_x = (params.width + 15) / 16;
+        let workgroups_y = (params.height + 15) / 16;
 
-        let workgroups_x = (params.width + 7) / 8;
-        let workgroups_y = (params.height + 7) / 8;
-
-        let dispatch_compute_pass = |pass_desc: ComputePassDescriptor, pipeline: &wgpu::ComputePipeline, encoder: &mut wgpu::CommandEncoder, bind_group: &wgpu::BindGroup, x: u32, y: u32| {
-            let mut pass = encoder.begin_compute_pass(&pass_desc);
+        let dispatch = |pass_desc: ComputePassDescriptor, pipeline: &wgpu::ComputePipeline, enc: &mut wgpu::CommandEncoder, bg: &wgpu::BindGroup| {
+            let mut pass = enc.begin_compute_pass(&pass_desc);
             pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, bind_group, &[]);
-            pass.dispatch_workgroups(x, y, 1);
+            pass.set_bind_group(0, bg, &[]);
+            pass.dispatch_workgroups(workgroups_x, workgroups_y, 1);
         };
 
-        dispatch_compute_pass(ComputePassDescriptor { label: Some("paper-base-pass"), timestamp_writes: None }, &self.paper_pipeline, &mut encoder, &self.bind_group, workgroups_x, workgroups_y);
-        dispatch_compute_pass(ComputePassDescriptor { label: Some("grain-pass"), timestamp_writes: None }, &self.grain_pipeline, &mut encoder, &self.bind_group, workgroups_x, workgroups_y);
-        dispatch_compute_pass(ComputePassDescriptor { label: Some("fiber-pass"), timestamp_writes: None }, &self.fiber_pipeline, &mut encoder, &self.bind_group, workgroups_x, workgroups_y);
-        dispatch_compute_pass(ComputePassDescriptor { label: Some("water-pass"), timestamp_writes: None }, &self.water_pipeline, &mut encoder, &self.bind_group, workgroups_x, workgroups_y);
-        dispatch_compute_pass(ComputePassDescriptor { label: Some("composite-pass"), timestamp_writes: None }, &self.composite_pipeline, &mut encoder, &self.bind_group, workgroups_x, workgroups_y);
+        dispatch(ComputePassDescriptor { label: Some("paper-base-pass"), timestamp_writes: None }, &self.paper_pipeline, &mut encoder, &self.bind_group);
+        dispatch(ComputePassDescriptor { label: Some("grain-pass"), timestamp_writes: None }, &self.grain_pipeline, &mut encoder, &self.bind_group);
+        dispatch(ComputePassDescriptor { label: Some("fiber-pass"), timestamp_writes: None }, &self.fiber_pipeline, &mut encoder, &self.bind_group);
+        dispatch(ComputePassDescriptor { label: Some("water-pass"), timestamp_writes: None }, &self.water_pipeline, &mut encoder, &self.bind_group);
+        dispatch(ComputePassDescriptor { label: Some("composite-pass"), timestamp_writes: None }, &self.composite_pipeline, &mut encoder, &self.bind_group);
 
         self.queue.submit(std::iter::once(encoder.finish()));
-        
-        // Wait indefinitely for the queue to finish processing submitted commands
         self.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-
         info!("Paper generation complete");
     }
-
-    // ── Render to surface ─────────────────────────────────────────
 
     pub fn render(&mut self) -> Result<(), RenderError> {
         let output = match self.surface.as_ref().unwrap().get_current_texture() {
@@ -385,37 +335,43 @@ impl PaperEngine {
             e => return Err(RenderError::Surface(format!("Failed to acquire surface texture: {:?}", e))),
         };
 
-        let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor {
-            label: Some("blit-encoder"),
-        });
-
-        type ImageCopyTextureTagged<'a> = wgpu::TexelCopyTextureInfo<'a>;
+        let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor { label: Some("blit-encoder") });
 
         encoder.copy_texture_to_texture(
-            ImageCopyTextureTagged {
-                texture: &self.output_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            ImageCopyTextureTagged {
-                texture: &output.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::Extent3d {
-                width: self.config.width,
-                height: self.config.height,
-                depth_or_array_layers: 1,
-            },
+            wgpu::TexelCopyTextureInfo { texture: &self.output_texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            wgpu::TexelCopyTextureInfo { texture: &output.texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            wgpu::Extent3d { width: self.config.width, height: self.config.height, depth_or_array_layers: 1 },
         );
 
         self.queue.submit(std::iter::once(encoder.finish()));
-        
-        // Present the copied output to the screen
         self.queue.present(output);
-
         Ok(())
+    }
+}
+
+// ── FFI Boundary (Exported to C/Kotlin) ─────────────────────────────
+#[no_mangle]
+pub extern "C" fn paper_engine_create(window: *mut c_void, width: u32, height: u32) -> *mut PaperEngine {
+    init_logging();
+    let engine = pollster::block_on(PaperEngine::new(window, width, height));
+    Box::into_raw(Box::new(engine))
+}
+
+#[no_mangle]
+pub extern "C" fn paper_engine_generate(engine: *mut PaperEngine, params: *const PaperParams) {
+    if engine.is_null() || params.is_null() { return; }
+    unsafe { (*engine).generate(&*params); }
+}
+
+#[no_mangle]
+pub extern "C" fn paper_engine_render(engine: *mut PaperEngine) -> bool {
+    if engine.is_null() { return false; }
+    unsafe { (*engine).render().is_ok() }
+}
+
+#[no_mangle]
+pub extern "C" fn paper_engine_destroy(engine: *mut PaperEngine) {
+    if !engine.is_null() {
+        unsafe { drop(Box::from_raw(engine)); }
     }
 }
